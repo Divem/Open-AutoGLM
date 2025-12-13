@@ -3,6 +3,7 @@
 import json
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from phone_agent.actions import ActionHandler
@@ -11,6 +12,7 @@ from phone_agent.adb import get_current_app, get_screenshot
 from phone_agent.config import get_messages, get_system_prompt
 from phone_agent.model import ModelClient, ModelConfig
 from phone_agent.model.client import MessageBuilder
+from phone_agent.recorder import ScriptRecorder
 
 
 @dataclass
@@ -22,6 +24,8 @@ class AgentConfig:
     lang: str = "cn"
     system_prompt: str | None = None
     verbose: bool = True
+    record_script: bool = False
+    script_output_dir: str = "scripts"
 
     def __post_init__(self):
         if self.system_prompt is None:
@@ -81,6 +85,11 @@ class PhoneAgent:
         self._context: list[dict[str, Any]] = []
         self._step_count = 0
 
+        # Initialize script recorder if enabled
+        self.recorder: ScriptRecorder | None = None
+        if self.agent_config.record_script:
+            self.recorder = ScriptRecorder(self.agent_config.script_output_dir)
+
     def run(self, task: str) -> str:
         """
         Run the agent to complete a task.
@@ -94,20 +103,46 @@ class PhoneAgent:
         self._context = []
         self._step_count = 0
 
-        # First step with user prompt
-        result = self._execute_step(task, is_first=True)
+        # Start script recording if enabled
+        if self.recorder:
+            self.recorder.start_recording(
+                task=task,
+                device_id=self.agent_config.device_id,
+                model_name=self.model_config.model_name
+            )
+            if self.agent_config.verbose:
+                print("📹 Script recording started")
 
-        if result.finished:
-            return result.message or "Task completed"
-
-        # Continue until finished or max steps reached
-        while self._step_count < self.agent_config.max_steps:
-            result = self._execute_step(is_first=False)
+        try:
+            # First step with user prompt
+            result = self._execute_step(task, is_first=True)
 
             if result.finished:
+                if self.recorder:
+                    self.recorder.finish_recording(result.success)
+                    self._save_script()
                 return result.message or "Task completed"
 
-        return "Max steps reached"
+            # Continue until finished or max steps reached
+            while self._step_count < self.agent_config.max_steps:
+                result = self._execute_step(is_first=False)
+
+                if result.finished:
+                    if self.recorder:
+                        self.recorder.finish_recording(result.success)
+                        self._save_script()
+                    return result.message or "Task completed"
+
+            if self.recorder:
+                self.recorder.finish_recording(False)
+                self._save_script()
+            return "Max steps reached"
+
+        except Exception as e:
+            if self.recorder:
+                self.recorder.finish_recording(False)
+                self._save_script()
+            raise e
 
     def step(self, task: str | None = None) -> StepResult:
         """
@@ -204,14 +239,30 @@ class PhoneAgent:
         # Remove image from context to save space
         self._context[-1] = MessageBuilder.remove_images_from_message(self._context[-1])
 
+        # Record step before execution
+        if self.recorder and action.get("_metadata") != "finish":
+            self.recorder.record_step(
+                action=action,
+                thinking=response.thinking,
+                screenshot_base64=screenshot.base64_data
+            )
+
         # Execute action
         try:
             result = self.action_handler.execute(
                 action, screenshot.width, screenshot.height
             )
+            # Update step recording with execution result
+            if self.recorder and action.get("_metadata") != "finish":
+                self.recorder.steps[-1].success = result.success
+                self.recorder.steps[-1].error_message = result.message if not result.success else None
         except Exception as e:
             if self.agent_config.verbose:
                 traceback.print_exc()
+            # Update step recording with error
+            if self.recorder and action.get("_metadata") != "finish":
+                self.recorder.steps[-1].success = False
+                self.recorder.steps[-1].error_message = str(e)
             result = self.action_handler.execute(
                 finish(message=str(e)), screenshot.width, screenshot.height
             )
@@ -246,6 +297,47 @@ class PhoneAgent:
     def context(self) -> list[dict[str, Any]]:
         """Get the current conversation context."""
         return self._context.copy()
+
+    def _save_script(self):
+        """Save the recorded script if recording is enabled."""
+        if not self.recorder or not self.recorder.steps:
+            return
+
+        try:
+            # Save JSON script
+            json_path = self.recorder.save_script()
+            # Generate Python replay script
+            python_path = self.recorder.generate_python_script(Path(json_path).name)
+
+            if self.agent_config.verbose:
+                print("\n" + "📹 " + "=" * 48)
+                print("💾 Automation script saved successfully!")
+                print(f"📄 JSON script: {json_path}")
+                print(f"🐍 Python script: {python_path}")
+                print(f"📊 Summary: {len(self.recorder.steps)} steps recorded")
+
+                # Print action breakdown
+                action_counts = {}
+                for step in self.recorder.steps:
+                    action_type = step.action_type
+                    action_counts[action_type] = action_counts.get(action_type, 0) + 1
+
+                if action_counts:
+                    print("📈 Actions breakdown:")
+                    for action, count in sorted(action_counts.items()):
+                        print(f"   {action}: {count}")
+
+                print("=" * 50 + "\n")
+
+        except Exception as e:
+            if self.agent_config.verbose:
+                print(f"❌ Failed to save script: {e}")
+
+    def get_script_summary(self) -> str | None:
+        """Get a summary of the recorded script."""
+        if self.recorder:
+            return self.recorder.get_summary()
+        return None
 
     @property
     def step_count(self) -> int:

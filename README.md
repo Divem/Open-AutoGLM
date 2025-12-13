@@ -251,6 +251,12 @@ python main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browse
 
 # 列出支持的应用
 python main.py --list-apps
+
+# 脚本记录模式 - 自动记录操作并生成可重放脚本
+python main.py --record-script "打开设置调整音量到最大"
+
+# 自定义脚本输出目录
+python main.py --record-script --script-output-dir my_scripts "检查天气应用"
 ```
 
 ### Python API
@@ -258,6 +264,7 @@ python main.py --list-apps
 ```python
 from phone_agent import PhoneAgent
 from phone_agent.model import ModelConfig
+from phone_agent.agent import AgentConfig
 
 # Configure model
 model_config = ModelConfig(
@@ -271,7 +278,167 @@ agent = PhoneAgent(model_config=model_config)
 # 执行任务
 result = agent.run("打开淘宝搜索无线耳机")
 print(result)
+
+# 使用脚本记录功能
+agent_config = AgentConfig(
+    record_script=True,              # 启用脚本记录
+    script_output_dir="scripts",     # 脚本输出目录
+)
+
+agent_with_recording = PhoneAgent(
+    model_config=model_config,
+    agent_config=agent_config
+)
+
+# 执行任务（自动记录）
+result = agent_with_recording.run("打开设置检查电池")
+print(result)
+
+# 获取录制摘要
+summary = agent_with_recording.get_script_summary()
+print(summary)
 ```
+
+## 📹 脚本记录与重放
+
+Phone Agent 现在支持脚本记录功能，可以在执行任务时自动记录所有操作并生成可重放的自动化脚本。
+
+### 功能特性
+
+- **自动记录**: 在执行任务时自动记录所有操作步骤
+- **详细信息**: 捕获操作类型、坐标、文本输入、思考过程等
+- **截图保存**: 可选保存每个步骤的截图（如果可用）
+- **执行结果**: 记录每个操作的成功/失败状态和错误信息
+- **脚本格式**: 同时生成 JSON 格式（数据存储）和 Python 脚本（可重放）
+- **完整重放**: 可以精确重现录制的操作序列
+
+### 命令行使用
+
+```bash
+# 启用脚本记录执行任务
+python main.py --record-script "打开微信查看未读消息"
+
+# 自定义脚本输出目录
+python main.py --record-script --script-output-dir my_scripts "检查天气应用"
+
+# 静默模式录制
+python main.py --record-script --quiet "发送测试邮件"
+
+# 结合其他参数使用
+python main.py --record-script --device-id emulator-5554 --max-steps 50 "设置闹钟"
+
+# 指定语言和模型
+python main.py --record-script --lang cn --model autoglm-phone "导航到公司"
+```
+
+### 生成的文件
+
+执行脚本记录后，系统会生成两个文件：
+
+1. **JSON 脚本文件**（如 `20251213_133613_打开设置调整音量到最大.json`）：
+   - 包含完整的元数据（任务名称、设备信息、执行时间、成功率等）
+   - 详细的步骤信息（操作类型、坐标、思考过程、截图路径等）
+
+2. **Python 重放脚本**（如 `20251213_133613_打开设置调整音量到最大_replay.py`）：
+   - 可直接运行的 Python 脚本
+   - 支持设备配置和操作延迟设置
+   - 包含错误处理和用户交互功能
+
+### 使用生成的脚本
+
+```bash
+# 运行重放脚本
+python scripts/20251213_133613_打开设置调整音量到最大_replay.py scripts/20251213_133613_打开设置调整音量到最大.json
+
+# 或者直接运行（如果脚本在同一目录）
+python scripts/your_task_replay.py
+```
+
+重放脚本执行时：
+- 显示任务信息和统计数据
+- 询问设备 ID 和操作延迟
+- 按顺序重放每个操作
+- 提供实时反馈和错误处理
+- 支持用户中断执行
+
+### 配置选项
+
+#### AgentConfig 参数
+
+```python
+from phone_agent.agent import AgentConfig
+
+config = AgentConfig(
+    record_script=True,              # 启用脚本记录
+    script_output_dir="scripts",     # 脚本输出目录
+    # ... 其他参数
+)
+```
+
+#### 命令行参数
+
+- `--record-script`: 启用脚本记录
+- `--script-output-dir DIR`: 指定脚本输出目录
+
+### 支持的操作类型
+
+| 操作类型 | 说明 | 支持重放 |
+|---------|------|---------|
+| Launch | 启动应用 | ✅ |
+| Tap | 点击操作 | ✅ |
+| Type | 文本输入 | ✅ |
+| Swipe | 滑动操作 | ✅ |
+| Back | 返回键 | ✅ |
+| Home | 主屏幕键 | ✅ |
+| Double Tap | 双击 | ✅ |
+| Long Press | 长按 | ✅ |
+| Wait | 等待/延迟 | ✅ |
+
+### 实际示例
+
+以下是一个完整的脚本记录示例：
+
+```bash
+# 执行任务并记录脚本
+python main.py --record-script "打开设置调整音量到最大"
+
+# 输出结果：
+# ✅ 任务完成: 打开设置调整音量到最大
+# 📊 执行统计: 4 步骤，成功率 100%，耗时 36.0s
+# 📄 脚本已保存: scripts/20251213_133613_打开设置调整音量到最大.json
+# 🐍 重放脚本: scripts/20251213_133613_打开设置调整音量到最大_replay.py
+```
+
+生成的 JSON 脚本包含：
+```json
+{
+  "metadata": {
+    "task_name": "打开设置调整音量到最大",
+    "description": "打开设置调整音量到最大",
+    "created_at": "2025-12-13T13:35:37.170487",
+    "total_steps": 4,
+    "device_id": null,
+    "model_name": "autoglm-phone",
+    "success_rate": 100.0,
+    "execution_time": 36.0
+  },
+  "steps": [
+    {
+      "step_number": 1,
+      "action_type": "Tap",
+      "action_data": {
+        "action": "Tap",
+        "element": [619, 721]
+      },
+      "thinking": "用户要求打开设置并调整音量到最大...",
+      "success": true
+    }
+    // ... 更多步骤
+  ]
+}
+```
+
+详细文档请参考：[SCRIPT_RECORDING.md](SCRIPT_RECORDING.md)
 
 ## 远程调试
 
@@ -370,14 +537,16 @@ conn.disconnect("192.168.1.100:5555")
 
 ### 环境变量
 
-| 变量                      | 描述               | 默认值                        |
-|-------------------------|------------------|----------------------------|
-| `PHONE_AGENT_BASE_URL`  | 模型 API 地址        | `http://localhost:8000/v1` |
-| `PHONE_AGENT_MODEL`     | 模型名称             | `autoglm-phone-9b`         |
-| `PHONE_AGENT_API_KEY`   | 模型认证 API Key     | `EMPTY`                    |
-| `PHONE_AGENT_MAX_STEPS` | 每个任务最大步数         | `100`                      |
-| `PHONE_AGENT_DEVICE_ID` | ADB 设备 ID        | (自动检测)                     |
-| `PHONE_AGENT_LANG`      | 语言 (`cn` 或 `en`) | `cn`                       |
+| 变量                           | 描述                    | 默认值                        |
+|------------------------------|-----------------------|----------------------------|
+| `PHONE_AGENT_BASE_URL`       | 模型 API 地址            | `http://localhost:8000/v1` |
+| `PHONE_AGENT_MODEL`          | 模型名称                 | `autoglm-phone-9b`         |
+| `PHONE_AGENT_API_KEY`        | 模型认证 API Key         | `EMPTY`                    |
+| `PHONE_AGENT_MAX_STEPS`      | 每个任务最大步数             | `100`                      |
+| `PHONE_AGENT_DEVICE_ID`      | ADB 设备 ID            | (自动检测)                     |
+| `PHONE_AGENT_LANG`           | 语言 (`cn` 或 `en`)      | `cn`                       |
+| `PHONE_AGENT_RECORD_SCRIPT`  | 是否启用脚本记录            | `false`                    |
+| `PHONE_AGENT_SCRIPT_OUTPUT_DIR` | 脚本输出目录               | `scripts`                  |
 
 ### 模型配置
 
@@ -404,6 +573,8 @@ config = AgentConfig(
     device_id=None,  # ADB 设备 ID(None 为自动检测)
     lang="cn",  # 语言选择：cn(中文)或 en(英文)
     verbose=True,  # 打印调试信息(包括思考过程和执行动作)
+    record_script=False,  # 是否启用脚本记录
+    script_output_dir="scripts",  # 脚本输出目录
 )
 ```
 
@@ -508,6 +679,7 @@ agent = PhoneAgent(
 查看 `examples/` 目录获取更多使用示例：
 
 - `basic_usage.py` - 基础任务执行
+- `script_recording_demo.py` - 脚本记录功能演示
 - 单步调试模式
 - 批量任务执行
 - 自定义回调
@@ -534,6 +706,7 @@ pytest tests/
 phone_agent/
 ├── __init__.py          # 包导出
 ├── agent.py             # PhoneAgent 主类
+├── recorder.py          # 脚本记录功能
 ├── adb/                 # ADB 工具
 │   ├── connection.py    # 远程/本地连接管理
 │   ├── screenshot.py    # 屏幕截图

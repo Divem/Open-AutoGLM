@@ -20,6 +20,13 @@ import subprocess
 import sys
 from urllib.parse import urlparse
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, continue without .env loading
+
 from openai import OpenAI
 
 from phone_agent import PhoneAgent
@@ -369,6 +376,19 @@ Examples:
     )
 
     parser.add_argument(
+        "--record-script",
+        action="store_true",
+        help="Record actions and generate automation script",
+    )
+
+    parser.add_argument(
+        "--script-output-dir",
+        type=str,
+        default="scripts",
+        help="Output directory for generated scripts (default: scripts)",
+    )
+
+    parser.add_argument(
         "task",
         nargs="?",
         type=str,
@@ -483,6 +503,8 @@ def main():
         device_id=args.device_id,
         verbose=not args.quiet,
         lang=args.lang,
+        record_script=args.record_script,
+        script_output_dir=args.script_output_dir,
     )
 
     # Create agent
@@ -509,36 +531,97 @@ def main():
 
     print("=" * 50)
 
+    # Show script recording status
+    if agent_config.record_script:
+        print(f"📹 Script Recording: Enabled")
+        print(f"📁 Script Output: {agent_config.script_output_dir}")
+        print("=" * 50)
+
     # Run with provided task or enter interactive mode
+    def run_single_task(task, agent):
+        """Execute a single task and return result."""
+        print(f"\n🎯 任务: {task}")
+        print("-" * 50)
+        result = agent.run(task)
+        print(f"\n✅ 执行完成: {result}")
+        print("-" * 50)
+        return result
+
+    def is_exit_command(task):
+        """Check if the task is an exit command."""
+        exit_commands = [
+            "结束任务", "退出", "quit", "exit", "q", "结束", "再见",
+            "关闭", "停止", "拜拜", "88", "bye", "停止任务"
+        ]
+        return task.lower().strip() in exit_commands
+
     if args.task:
-        print(f"\nTask: {args.task}\n")
-        result = agent.run(args.task)
-        print(f"\nResult: {result}")
-    else:
-        # Interactive mode
-        print("\nEntering interactive mode. Type 'quit' to exit.\n")
+        # Execute the initial task
+        run_single_task(args.task, agent)
+
+        # Continue with continuous task mode
+        print("\n🔄 连续任务模式已启动")
+        print("💡 您现在可以继续输入新任务")
+        print("🛑 输入'结束任务'、'quit'或'退出'来结束程序")
+        print("=" * 50)
 
         while True:
             try:
-                task = input("Enter your task: ").strip()
+                task = input("\n📝 请输入下一个任务: ").strip()
 
-                if task.lower() in ("quit", "exit", "q"):
-                    print("Goodbye!")
+                if not task:
+                    print("❌ 任务不能为空，请重新输入")
+                    continue
+
+                if is_exit_command(task):
+                    print("\n👋 感谢使用 Open-AutoGLM，再见！")
+                    break
+
+                print(f"\n🚀 开始执行: {task}")
+                run_single_task(task, agent)
+                agent.reset()
+
+                print("\n💫 任务完成！您可以:")
+                print("   1. 输入新任务继续操作")
+                print("   2. 输入'结束任务'退出程序")
+
+            except KeyboardInterrupt:
+                print("\n\n⚡ 用户中断，程序退出")
+                break
+            except Exception as e:
+                print(f"\n❌ 执行出错: {e}")
+                print("💡 请检查任务描述或重试")
+                continue
+
+    else:
+        # Interactive mode (original logic)
+        print("\n🎮 进入交互模式")
+        print("💡 输入任务开始，输入'quit'、'退出'或'结束任务'结束")
+        print("=" * 50)
+
+        while True:
+            try:
+                task = input("\n📝 请输入您的任务: ").strip()
+
+                if task.lower() in ("quit", "exit", "q", "结束任务", "退出"):
+                    print("\n👋 感谢使用 Open-AutoGLM，再见！")
                     break
 
                 if not task:
+                    print("❌ 任务不能为空，请重新输入")
                     continue
 
-                print()
+                print(f"\n🚀 开始执行: {task}")
                 result = agent.run(task)
-                print(f"\nResult: {result}\n")
+                print(f"\n✅ 执行完成: {result}\n")
                 agent.reset()
 
             except KeyboardInterrupt:
-                print("\n\nInterrupted. Goodbye!")
+                print("\n\n⚡ 用户中断，程序退出")
                 break
             except Exception as e:
-                print(f"\nError: {e}\n")
+                print(f"\n❌ 执行出错: {e}")
+                continue
 
 
 if __name__ == "__main__":
