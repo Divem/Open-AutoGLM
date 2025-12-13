@@ -90,7 +90,7 @@ class PhoneAgent:
         if self.agent_config.record_script:
             self.recorder = ScriptRecorder(self.agent_config.script_output_dir)
 
-    def run(self, task: str) -> str:
+    def run(self, task: str, step_callback: Callable[[dict], None] = None) -> str:
         """
         Run the agent to complete a task.
 
@@ -115,7 +115,7 @@ class PhoneAgent:
 
         try:
             # First step with user prompt
-            result = self._execute_step(task, is_first=True)
+            result = self._execute_step(task, is_first=True, step_callback=step_callback)
 
             if result.finished:
                 if self.recorder:
@@ -125,7 +125,7 @@ class PhoneAgent:
 
             # Continue until finished or max steps reached
             while self._step_count < self.agent_config.max_steps:
-                result = self._execute_step(is_first=False)
+                result = self._execute_step(is_first=False, step_callback=step_callback)
 
                 if result.finished:
                     if self.recorder:
@@ -169,7 +169,7 @@ class PhoneAgent:
         self._step_count = 0
 
     def _execute_step(
-        self, user_prompt: str | None = None, is_first: bool = False
+        self, user_prompt: str | None = None, is_first: bool = False, step_callback: Callable[[dict], None] = None
     ) -> StepResult:
         """Execute a single step of the agent loop."""
         self._step_count += 1
@@ -284,6 +284,19 @@ class PhoneAgent:
                 f"✅ {msgs['task_completed']}: {result.message or action.get('message', msgs['done'])}"
             )
             print("=" * 50 + "\n")
+
+        # Call step callback if provided
+        if step_callback:
+            step_data = {
+                'step_number': self._step_count,
+                'thinking': response.thinking,
+                'action': action,
+                'result': result,
+                'screenshot': screenshot.base64_data[:100] + '...' if screenshot.base64_data else None,  # Truncate for performance
+                'success': result.success,
+                'finished': finished
+            }
+            step_callback(step_data)
 
         return StepResult(
             success=result.success,

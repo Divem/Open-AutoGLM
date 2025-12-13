@@ -1,0 +1,638 @@
+/* Phone Agent Web Interface Styles */
+
+/* 基础样式 */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* 主容器样式 */
+.container-fluid {
+    height: 100vh;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Navbar 样式 */
+.navbar {
+    height: 30px !important;
+    min-height: 30px !important;
+    padding: 0.25rem 1rem !important;
+}
+
+.navbar-brand {
+    font-size: 0.9rem !important;
+    padding: 0.25rem 0 !important;
+    height: 30px !important;
+    display: flex;
+    align-items: center;
+}
+
+.navbar-nav .nav-link {
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.8rem !important;
+    height: 30px !important;
+    display: flex;
+    align-items: center;
+}
+
+/* 主行容器 */
+.row {
+    flex: 1;
+    margin: 0;
+    height: calc(100vh - 30px); /* 减去导航栏高度 */
+}
+
+/* 列容器 */
+.col-md-8, .col-md-4 {
+    padding: 0;
+    height: 100%;
+}
+
+/* 左侧聊天区域 */
+.col-md-8 {
+    display: flex;
+    flex-direction: column;
+}
+
+/* 右侧面板区域 */
+.col-md-4 {
+    overflow: hidden; /* 右侧面板不滚动 */
+}
+
+/* 聊天界面样式 */
+.chat-header {
+    background: linear-gradient(45deg, #2c3e50, #3498db) !important;
+    border-bottom: 2px solid #34495e;
+    flex-shrink: 0; /* 不缩放 */
+}
+
+.chat-container {
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    padding: 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1; /* 占据剩余空间 */
+    min-height: 0; /* 允许flex子元素收缩 */
+}
+
+.chat-input-area {
+    background: rgba(255, 255, 255, 0.98) !important;
+    backdrop-filter: blur(10px);
+    border-top: 1px solid #e1e8ed;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+    padding: 15px;
+    flex-shrink: 0; /* 固定在底部，不缩放 */
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+}
+
+/* 消息样式 */
+.message {
+    margin-bottom: 15px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+.message.user {
+    text-align: right;
+}
+
+.message.assistant {
+    text-align: left;
+}
+
+.message-content {
+    display: inline-block;
+    max-width: 70%;
+    padding: 12px 16px;
+    border-radius: 18px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    word-wrap: break-word;
+}
+
+.message.user .message-content {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.message.assistant .message-content {
+    background: white;
+    color: #333;
+    border-bottom-left-radius: 4px;
+}
+
+.message-time {
+    font-size: 0.75rem;
+    color: #666;
+    margin-top: 5px;
+}
+
+.message.user .message-time {
+    text-align: right;
+}
+
+/* 状态面板样式 */
+.status-panel, .device-info, .screenshot-panel, .supported-apps {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.screenshot-container {
+    border: 2px dashed #ddd;
+    border-radius: 8px;
+    min-height: 200px;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.screenshot-container img {
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: 6px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+/* 设备列表样式 */
+.device-item {
+    padding: 10px;
+    margin: 5px 0;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 4px solid #28a745;
+}
+
+.device-item.disconnected {
+    border-left-color: #dc3545;
+}
+
+/* 应用列表样式 */
+.app-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    margin: 2px;
+    background: #e9ecef;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    color: #495057;
+    transition: all 0.2s;
+}
+
+.app-badge:hover {
+    background: #007bff;
+    color: white;
+    transform: scale(1.05);
+}
+
+/* 状态徽章样式 */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-badge.running {
+    background: #28a745;
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+.status-badge.error {
+    background: #dc3545;
+    color: white;
+}
+
+.status-badge.idle {
+    background: #6c757d;
+    color: white;
+}
+
+/* 进度条样式 */
+.progress {
+    background: #e9ecef;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    background: linear-gradient(45deg, #28a745, #20c997);
+    transition: width 0.3s ease;
+}
+
+/* 按钮样式 */
+.btn {
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.btn:disabled {
+    transform: none;
+    box-shadow: none;
+}
+
+/* 输入框样式 */
+.form-control {
+    border-radius: 8px;
+    border: 2px solid #e9ecef;
+    transition: border-color 0.2s;
+}
+
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
+}
+
+/* 步骤更新样式 */
+.step-update {
+    background: rgba(40, 167, 69, 0.1);
+    border-left: 4px solid #28a745;
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    animation: slideInLeft 0.3s ease-out;
+}
+
+.step-thinking {
+    background: rgba(23, 162, 184, 0.1);
+    border-left: 4px solid #17a2b8;
+    margin-bottom: 8px;
+    padding: 8px;
+    border-radius: 4px;
+    font-style: italic;
+    font-size: 0.85rem;
+}
+
+.step-action {
+    background: rgba(255, 193, 7, 0.1);
+    border-left: 4px solid #ffc107;
+    padding: 8px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+}
+
+/* 欢迎消息样式 */
+.chat-container .text-center.text-muted {
+    color: #2c3e50 !important;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin: auto;
+    max-width: 400px;
+    flex-shrink: 0;
+}
+
+.chat-container .text-center.text-muted i {
+    color: #3498db !important;
+    margin-bottom: 15px;
+}
+
+.chat-container .text-center.text-muted h3 {
+    color: #2c3e50 !important;
+    margin-bottom: 20px;
+    font-weight: 600;
+}
+
+.chat-container .text-center.text-muted p {
+    color: #34495e !important;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+/* 右侧面板容器 */
+.right-panel {
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 右侧面板内容区域 */
+.right-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* 状态面板、设备信息等 */
+.status-panel, .device-info, .screenshot-panel, .supported-apps {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.input-group {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border-radius: 8px !important;
+    overflow: hidden;
+}
+
+.input-group .form-control {
+    height: 38px; /* 固定高度 */
+}
+
+.input-group .btn {
+    height: 38px; /* 固定高度 */
+    padding: 0 12px; /* 减少左右padding */
+}
+
+.form-control:focus {
+    border-color: #3498db;
+    box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+}
+
+/* 动画效果 */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+    }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .message-content {
+        max-width: 85%;
+    }
+
+    .screenshot-container img {
+        max-height: 200px;
+    }
+
+    .col-md-8, .col-md-4 {
+        width: 100%;
+    }
+
+    .col-md-4 {
+        border-top: 1px solid #dee2e6 !important;
+        border-left: none !important;
+    }
+}
+
+/* 配置页面样式 */
+.card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+}
+
+.card-header {
+    border-radius: 12px 12px 0 0 !important;
+    border: none;
+    font-weight: 600;
+}
+
+.btn-group .btn {
+    border-radius: 6px;
+    margin-right: 5px;
+}
+
+.form-check-input:checked {
+    background-color: #007bff;
+    border-color: #007bff;
+}
+
+/* Toast 样式 */
+.toast {
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+}
+
+/* 连接状态指示器 */
+.connection-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 5px;
+    animation: pulse 2s infinite;
+}
+
+.connection-indicator.connected {
+    background: #28a745;
+}
+
+.connection-indicator.disconnected {
+    background: #dc3545;
+    animation: none;
+}
+
+/* 加载动画 */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0,0,0,0.1);
+    border-radius: 50%;
+    border-top-color: #007bff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* 代码块样式 */
+.code-block {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    overflow-x: auto;
+}
+
+/* 截图预览样式 */
+.screenshot-preview {
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.screenshot-preview:hover {
+    transform: scale(1.02);
+}
+
+.screenshot-preview .zoom-hint {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.7);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.screenshot-preview:hover .zoom-hint {
+    opacity: 1;
+}
+
+/* 任务历史样式 */
+.task-history-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.task-history-item {
+    padding: 10px;
+    margin: 5px 0;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 4px solid #6c757d;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.task-history-item:hover {
+    background: #e9ecef;
+    transform: translateX(2px);
+}
+
+.task-history-item.running {
+    border-left-color: #28a745;
+    background: rgba(40, 167, 69, 0.1);
+}
+
+.task-history-item.completed {
+    border-left-color: #007bff;
+    background: rgba(0, 123, 255, 0.1);
+}
+
+.task-history-item.error {
+    border-left-color: #dc3545;
+    background: rgba(220, 53, 69, 0.1);
+}
+
+.task-history-item.stopped {
+    border-left-color: #ffc107;
+    background: rgba(255, 193, 7, 0.1);
+}
+
+.task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.task-title {
+    font-weight: 500;
+    color: #495057;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-grow: 1;
+    max-width: 150px;
+}
+
+.task-status {
+    padding: 2px 6px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+
+.task-time {
+    color: #6c757d;
+    font-size: 0.7rem;
+}
+
+.task-actions {
+    margin-top: 5px;
+    display: flex;
+    gap: 5px;
+}
+
+.task-actions button {
+    padding: 2px 6px;
+    font-size: 0.7rem;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+}
+
+.task-actions .stop-btn {
+    background: #dc3545;
+    color: white;
+}
+
+.task-actions .stop-btn:hover {
+    background: #c82333;
+}
+
+.task-actions .view-btn {
+    background: #6c757d;
+    color: white;
+}
+
+.task-actions .view-btn:hover {
+    background: #5a6268;
+}
+
+.task-description {
+    color: #6c757d;
+    font-size: 0.75rem;
+    margin-top: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

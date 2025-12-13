@@ -440,6 +440,38 @@ python main.py --record-script "打开设置调整音量到最大"
 
 详细文档请参考：[SCRIPT_RECORDING.md](SCRIPT_RECORDING.md)
 
+## 🌐 Web 界面
+
+Phone Agent 现在支持现代化的 Web 界面，提供更直观的用户体验：
+
+### 功能特性
+- **多轮对话**: 支持连续的对话交互
+- **实时监控**: WebSocket 实时推送执行状态
+- **截图显示**: 实时显示操作过程中的手机截图
+- **配置管理**: 可视化配置模型和设备参数
+- **状态追踪**: 详细的执行步骤和性能统计
+
+### 快速启动
+
+```bash
+# 安装 Web 依赖
+pip install -r requirements-web.txt
+
+# 启动 Web 服务
+python web_start.py
+
+# 访问界面
+# 浏览器打开: http://localhost:5000
+```
+
+### 界面功能
+- **主界面**: 聊天式的任务交互界面
+- **配置页面**: 模型和设备参数设置
+- **实时状态**: 执行进度和截图显示
+- **设备管理**: ADB 设备连接状态
+
+详细使用说明请参考：[WEB_INTERFACE.md](WEB_INTERFACE.md)
+
 ## 远程调试
 
 Phone Agent 支持通过 WiFi/网络进行远程 ADB 调试，无需 USB 连接即可控制设备。
@@ -720,6 +752,21 @@ phone_agent/
 │   └── prompts_en.py    # 英文系统提示词
 └── model/               # AI 模型客户端
     └── client.py        # OpenAI 兼容客户端
+
+web/                     # Web 界面
+├── app.py               # Flask 应用主文件
+├── static/              # 静态资源
+│   ├── css/
+│   │   └── style.css    # 界面样式
+│   └── js/
+│       ├── app.js       # 主界面 JavaScript
+│       └── config.js    # 配置页面 JavaScript
+└── templates/           # HTML 模板
+    ├── index.html       # 主界面
+    └── config.html      # 配置界面
+
+web_start.py             # Web 服务启动脚本
+requirements-web.txt     # Web 界面依赖
 ```
 
 ## 常见问题
