@@ -14,9 +14,6 @@ class PhoneAgentWeb {
         this.isProcessingQueue = false;
         this.batchProcessTimer = null;
 
-        // 初始化Markdown渲染器
-        this.markdownRenderer = new MarkdownRenderer();
-
         this.init();
     }
 
@@ -1069,54 +1066,6 @@ class PhoneAgentWeb {
         return div.innerHTML;
     }
 
-    /**
-     * 渲染任务结果内容（支持Markdown）
-     */
-    renderTaskResult(content) {
-        if (!content) return '';
-
-        const isMarkdown = this.markdownRenderer.isMarkdownContent(content);
-        const renderedContent = this.markdownRenderer.render(content);
-
-        return `
-            <div class="row mb-3">
-                <div class="col-sm-3"><strong>执行结果:</strong></div>
-                <div class="col-sm-9">
-                    <div class="task-result-container ${isMarkdown ? 'markdown-content' : ''}">
-                        ${isMarkdown ?
-                            `<div class="markdown-body">${renderedContent}</div>` :
-                            `<pre>${renderedContent}</pre>`
-                        }
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    /**
-     * 渲染任务错误信息（支持Markdown）
-     */
-    renderTaskError(content) {
-        if (!content) return '';
-
-        const isMarkdown = this.markdownRenderer.isMarkdownContent(content);
-        const renderedContent = this.markdownRenderer.render(content);
-
-        return `
-            <div class="row mb-3">
-                <div class="col-sm-3"><strong>错误信息:</strong></div>
-                <div class="col-sm-9">
-                    <div class="task-error-container ${isMarkdown ? 'markdown-content' : ''}">
-                        ${isMarkdown ?
-                            `<div class="markdown-body">${renderedContent}</div>` :
-                            `<pre>${renderedContent}</pre>`
-                        }
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
     updateTaskHistoryList(tasks) {
         const container = document.getElementById('task-history-list');
 
@@ -1161,11 +1110,6 @@ class PhoneAgentWeb {
                                 <i class="fas fa-stop"></i> 停止
                             </button>
                         ` : ''}
-                        ${task.status === 'completed' || task.status === 'error' || task.status === 'stopped' ? `
-                            <button class="report-btn" onclick="phoneAgentWeb.viewTaskReport('${task.task_id}')" title="查看执行报告">
-                                <i class="fas fa-chart-line"></i> 报告
-                            </button>
-                        ` : ''}
                         ${task.script_id ? `
                             <button class="script-btn" onclick="phoneAgentWeb.viewScript('${task.script_id}')" title="查看脚本">
                                 <i class="fas fa-code"></i> 脚本
@@ -1183,10 +1127,6 @@ class PhoneAgentWeb {
     }
 
     showTaskDetails(task) {
-        // 渲染任务结果和错误信息
-        const resultContent = this.renderTaskResult(task.result);
-        const errorContent = this.renderTaskError(task.error_message);
-
         // 创建模态框显示任务详情
         const modalHtml = `
             <div class="modal fade" id="taskDetailsModal" tabindex="-1">
@@ -1227,8 +1167,26 @@ class PhoneAgentWeb {
                                     <div class="col-sm-9">${new Date(task.end_time).toLocaleString()}</div>
                                 </div>
                             ` : ''}
-                            ${resultContent}
-                            ${errorContent}
+                            ${task.result ? `
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>执行结果:</strong></div>
+                                    <div class="col-sm-9">
+                                        <div class="alert alert-info">
+                                            <pre style="white-space: pre-wrap; margin: 0;">${this.escapeHtml(task.result)}</pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${task.error_message ? `
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>错误信息:</strong></div>
+                                    <div class="col-sm-9">
+                                        <div class="alert alert-danger">
+                                            <pre style="white-space: pre-wrap; margin: 0;">${this.escapeHtml(task.error_message)}</pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
@@ -1287,11 +1245,6 @@ class PhoneAgentWeb {
                 </div>
             `;
         }
-    }
-
-    viewTaskReport(taskId) {
-        // 在新窗口中打开任务报告页面
-        window.open(`/tasks/${taskId}/report`, '_blank');
     }
 
     showToast(message, type = 'info') {
@@ -1739,196 +1692,6 @@ class FloatingScreenshotManager {
         this.window = null;
         this.header = null;
         this.toggleBtn = null;
-    }
-}
-
-/**
- * Markdown渲染器类 - 支持安全地将Markdown内容渲染为HTML
- */
-class MarkdownRenderer {
-    constructor() {
-        this.initMarked();
-        this.MAX_CONTENT_LENGTH = 50000; // 最大内容长度限制
-    }
-
-    /**
-     * 初始化marked.js配置
-     */
-    initMarked() {
-        if (typeof marked === 'undefined') {
-            console.warn('marked.js not loaded, falling back to plain text');
-            return;
-        }
-
-        // 配置marked.js选项
-        marked.setOptions({
-            gfm: true,              // 启用GitHub风格Markdown
-            breaks: true,           // 支持换行
-            headerIds: false,       // 禁用自动ID生成
-            sanitize: false,        // 使用自定义清理
-            smartLists: true,       // 智能列表
-            smartypants: false      // 禁用智能标点
-        });
-
-        // 自定义渲染器
-        const renderer = new marked.Renderer();
-        this.configureRenderer(renderer);
-        marked.setOptions({ renderer });
-    }
-
-    /**
-     * 配置自定义渲染器
-     */
-    configureRenderer(renderer) {
-        // 自定义链接渲染 - 添加安全属性
-        renderer.link = (href, title, text) => {
-            const safeHref = this.sanitizeUrl(href);
-            const titleAttr = title ? ` title="${this.escapeHtml(title)}"` : '';
-            return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`;
-        };
-
-        // 自定义代码块渲染 - 添加语言标识
-        renderer.code = (code, language) => {
-            const validLanguage = this.isValidLanguage(language) ? language : '';
-            const langClass = validLanguage ? ` class="language-${validLanguage}"` : '';
-            return `<pre><code${langClass}>${this.escapeHtml(code)}</code></pre>`;
-        };
-
-        // 自定义图片渲染 - 添加安全属性
-        renderer.image = (href, title, text) => {
-            const safeHref = this.sanitizeUrl(href);
-            const titleAttr = title ? ` title="${this.escapeHtml(title)}"` : '';
-            const altAttr = text ? ` alt="${this.escapeHtml(text)}"` : '';
-            return `<img src="${safeHref}"${altAttr}${titleAttr} style="max-width: 100%; height: auto;">`;
-        };
-    }
-
-    /**
-     * 检测内容是否为Markdown格式
-     */
-    isMarkdownContent(text) {
-        if (!text || typeof text !== 'string') return false;
-
-        // 快速检查常见Markdown模式
-        const patterns = [
-            /^#{1,6}\s/m,                    // 标题
-            /^\*{1,2}[^*\n]+\*{1,2}/m,      // 粗体/斜体
-            /^[-*+]\s+/m,                    // 无序列表
-            /^\d+\.\s+/m,                    // 有序列表
-            /^\[.*?\]\(.*?\)/m,              // 链接
-            /```[\s\S]*?```/m,               // 代码块
-            /`[^`\n]+`/m,                    // 行内代码
-            /^>[\s\S]/m,                     // 引用
-            /^\|.*\|/m                       // 表格
-        ];
-
-        // 如果文本太短，不太可能是复杂的Markdown
-        if (text.length < 20) return false;
-
-        // 检查是否包含多个Markdown元素
-        const matchCount = patterns.reduce((count, pattern) => {
-            return pattern.test(text) ? count + 1 : count;
-        }, 0);
-
-        return matchCount >= 2; // 至少包含2个Markdown元素
-    }
-
-    /**
-     * 渲染Markdown内容
-     */
-    render(content) {
-        try {
-            // 内容长度限制
-            if (content.length > this.MAX_CONTENT_LENGTH) {
-                console.warn('Content too long for safe rendering:', content.length);
-                return this.escapeHtml(content);
-            }
-
-            // 检测是否为Markdown
-            if (!this.isMarkdownContent(content)) {
-                return this.escapeHtml(content);
-            }
-
-            // 检查marked.js是否可用
-            if (typeof marked === 'undefined') {
-                console.warn('marked.js not available, falling back to plain text');
-                return this.escapeHtml(content);
-            }
-
-            // 渲染Markdown
-            const html = marked.parse(content);
-
-            // 清理HTML
-            return this.sanitizeHtml(html);
-
-        } catch (error) {
-            console.error('Markdown rendering error:', error);
-            return this.escapeHtml(content);
-        }
-    }
-
-    /**
-     * 转义HTML字符
-     */
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
-     * 清理HTML内容，移除危险元素
-     */
-    sanitizeHtml(html) {
-        // 移除危险的HTML标签
-        const dangerousTags = /<(script|iframe|object|embed|form|input|button|textarea|select|option|style|link|meta)[^>]*>/gi;
-
-        // 移除危险的属性和事件处理器
-        const dangerousAttrs = /(on\w+|javascript:|data:text\/html|vbscript:|data:script)/gi;
-
-        // 移除危险的CSS样式
-        const dangerousStyles = /(expression|behavior|javascript:|@import|binding)/gi;
-
-        return html
-            .replace(dangerousTags, '')
-            .replace(dangerousAttrs, '')
-            .replace(dangerousStyles, '');
-    }
-
-    /**
-     * 清理URL，确保安全性
-     */
-    sanitizeUrl(url) {
-        try {
-            if (!url) return '#';
-
-            // 只允许http/https/mailto/tel协议
-            const parsed = new URL(url, window.location.origin);
-            if (['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)) {
-                return parsed.toString();
-            }
-        } catch (e) {
-            // URL解析失败，返回安全的默认值
-            console.warn('Invalid URL:', url);
-        }
-        return '#';
-    }
-
-    /**
-     * 验证代码语言是否在白名单中
-     */
-    isValidLanguage(language) {
-        if (!language) return true;
-
-        // 常见的代码语言白名单
-        const validLanguages = [
-            'javascript', 'js', 'typescript', 'ts', 'python', 'py', 'java', 'cpp', 'c', 'c++',
-            'html', 'css', 'json', 'xml', 'yaml', 'yml', 'bash', 'shell', 'sh', 'sql',
-            'markdown', 'md', 'go', 'rust', 'rs', 'php', 'ruby', 'rb', 'swift', 'kotlin',
-            'kt', 'scala', 'r', 'dart', 'lua', 'perl', 'pl', 'objc', 'vb', 'dockerfile',
-            'diff', 'patch', 'log', 'txt', 'text', 'plain', 'nginx', 'apache', 'ini'
-        ];
-        return validLanguages.includes(language.toLowerCase());
     }
 }
 

@@ -7,7 +7,9 @@ import tempfile
 import uuid
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Tuple
+from typing import Tuple, Optional
+from datetime import datetime
+from pathlib import Path
 
 from PIL import Image
 
@@ -20,15 +22,17 @@ class Screenshot:
     width: int
     height: int
     is_sensitive: bool = False
+    local_path: Optional[str] = None
 
 
-def get_screenshot(device_id: str | None = None, timeout: int = 10) -> Screenshot:
+def get_screenshot(device_id: str | None = None, timeout: int = 10, save_to_web_dir: bool = True) -> Screenshot:
     """
     Capture a screenshot from the connected Android device.
 
     Args:
         device_id: Optional ADB device ID for multi-device setups.
         timeout: Timeout in seconds for screenshot operations.
+        save_to_web_dir: Whether to save screenshot to web static directory.
 
     Returns:
         Screenshot object containing base64 data and dimensions.
@@ -37,8 +41,25 @@ def get_screenshot(device_id: str | None = None, timeout: int = 10) -> Screensho
         If the screenshot fails (e.g., on sensitive screens like payment pages),
         a black fallback image is returned with is_sensitive=True.
     """
+    # Create temp path for initial capture
     temp_path = os.path.join(tempfile.gettempdir(), f"screenshot_{uuid.uuid4()}.png")
     adb_prefix = _get_adb_prefix(device_id)
+
+    # Prepare web directory path if needed
+    web_screenshot_path = None
+    if save_to_web_dir:
+        try:
+            # Create web screenshots directory
+            web_dir = Path("web/static/screenshots")
+            web_dir.mkdir(parents=True, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
+            unique_id = str(uuid.uuid4())[:8]
+            web_screenshot_path = str(web_dir / f"screenshot_{timestamp}_{unique_id}.png")
+        except Exception as e:
+            print(f"Warning: Could not create web screenshots directory: {e}")
+            save_to_web_dir = False
 
     try:
         # Execute screenshot command
@@ -69,15 +90,27 @@ def get_screenshot(device_id: str | None = None, timeout: int = 10) -> Screensho
         img = Image.open(temp_path)
         width, height = img.size
 
+        # Save to web directory if requested
+        if save_to_web_dir and web_screenshot_path:
+            try:
+                img.save(web_screenshot_path, format="PNG", optimize=True)
+                print(f"Screenshot saved to: {web_screenshot_path}")
+            except Exception as e:
+                print(f"Warning: Could not save screenshot to web directory: {e}")
+
         buffered = BytesIO()
         img.save(buffered, format="PNG")
         base64_data = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-        # Cleanup
+        # Cleanup temp file
         os.remove(temp_path)
 
         return Screenshot(
-            base64_data=base64_data, width=width, height=height, is_sensitive=False
+            base64_data=base64_data,
+            width=width,
+            height=height,
+            is_sensitive=False,
+            local_path=web_screenshot_path if save_to_web_dir and web_screenshot_path else None
         )
 
     except Exception as e:

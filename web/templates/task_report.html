@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务执行报告 - {{ task.task_description[:50] }}...</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .timeline {
+            position: relative;
+            padding: 20px 0;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 100%;
+            background: #dee2e6;
+        }
+        .timeline-item {
+            position: relative;
+            margin-bottom: 30px;
+        }
+        .timeline-content {
+            position: relative;
+            width: 45%;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .timeline-item:nth-child(odd) .timeline-content {
+            margin-left: auto;
+        }
+        .timeline-dot {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #0d6efd;
+            transform: translateX(-50%);
+            border: 4px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .timeline-dot.success {
+            background: #198754;
+        }
+        .timeline-dot.error {
+            background: #dc3545;
+        }
+        .timeline-dot.thinking {
+            background: #6c757d;
+        }
+        .screenshot-preview {
+            max-width: 300px;
+            max-height: 200px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .screenshot-preview:hover {
+            transform: scale(1.05);
+        }
+        .step-type-badge {
+            font-size: 0.75rem;
+        }
+        .stats-card {
+            border-left: 4px solid #0d6efd;
+        }
+        .thinking-text {
+            background: #f8f9fa;
+            border-left: 3px solid #6c757d;
+            padding: 10px;
+            font-style: italic;
+            margin: 10px 0;
+        }
+        @media (max-width: 768px) {
+            .timeline::before {
+                left: 30px;
+            }
+            .timeline-content {
+                width: calc(100% - 60px);
+                margin-left: 60px !important;
+            }
+            .timeline-dot {
+                left: 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <!-- 任务信息 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">
+                            <i class="bi bi-clipboard-data me-2"></i>
+                            任务执行报告
+                        </h4>
+                        <div>
+                            <button class="btn btn-outline-primary btn-sm me-2" onclick="exportReport('pdf')">
+                                <i class="bi bi-file-pdf me-1"></i>导出 PDF
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="window.history.back()">
+                                <i class="bi bi-arrow-left me-1"></i>返回
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <h5>{{ task.task_description }}</h5>
+                        <div class="row text-muted">
+                            <div class="col-md-3">
+                                <i class="bi bi-calendar3 me-1"></i>
+                                开始时间: {{ task.created_at | datetimeformat }}
+                            </div>
+                            <div class="col-md-3">
+                                <i class="bi bi-calendar-check me-1"></i>
+                                结束时间: {{ task.end_time | datetimeformat if task.end_time else '进行中' }}
+                            </div>
+                            <div class="col-md-3">
+                                <i class="bi bi-hourglass-split me-1"></i>
+                                状态: <span class="badge bg-{{ 'success' if task.status == 'completed' else 'warning' if task.status == 'running' else 'danger' }}">
+                                    {{ task.status }}
+                                </span>
+                            </div>
+                            <div class="col-md-3">
+                                <i class="bi bi-person me-1"></i>
+                                用户: {{ task.user_id }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计信息 -->
+        <div class="row mb-4" id="statistics">
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body text-center">
+                        <h3 class="text-primary" id="total-steps">-</h3>
+                        <p class="mb-0">总步骤数</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card" style="border-left-color: #198754;">
+                    <div class="card-body text-center">
+                        <h3 class="text-success" id="successful-steps">-</h3>
+                        <p class="mb-0">成功步骤</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card" style="border-left-color: #dc3545;">
+                    <div class="card-body text-center">
+                        <h3 class="text-danger" id="failed-steps">-</h3>
+                        <p class="mb-0">失败步骤</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card" style="border-left-color: #ffc107;">
+                    <div class="card-body text-center">
+                        <h3 class="text-warning" id="success-rate">-</h3>
+                        <p class="mb-0">成功率</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 执行时间线 -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-clock-history me-2"></i>
+                            执行时间线
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="timeline" id="timeline">
+                            <!-- 步骤将通过 JavaScript 动态加载 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 截图展示 -->
+        <div class="row mt-4" id="screenshots-section">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-images me-2"></i>
+                            执行截图
+                            <span class="badge bg-secondary ms-2" id="screenshot-count">0</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="screenshots-grid">
+                            <!-- 截图将通过 JavaScript 动态加载 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 截图模态框 -->
+    <div class="modal fade" id="screenshotModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">截图预览</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <img id="modalScreenshot" class="img-fluid" alt="截图">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <a href="#" id="downloadScreenshot" class="btn btn-primary" download>
+                        <i class="bi bi-download me-1"></i>下载
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const taskId = '{{ task.task_id }}';
+        let reportData = null;
+
+        // 页面加载完成后获取报告数据
+        document.addEventListener('DOMContentLoaded', function() {
+            loadTaskReport();
+        });
+
+        // 加载任务报告
+        async function loadTaskReport() {
+            try {
+                const response = await fetch(`/api/tasks/${taskId}/report`);
+                const result = await response.json();
+
+                if (response.ok) {
+                    reportData = result.data;
+                    displayStatistics();
+                    displayTimeline();
+                    displayScreenshots();
+                } else {
+                    showError('加载报告失败: ' + result.error);
+                }
+            } catch (error) {
+                showError('网络错误: ' + error.message);
+            }
+        }
+
+        // 显示统计信息
+        function displayStatistics() {
+            const stats = reportData.statistics;
+            document.getElementById('total-steps').textContent = stats.total_steps;
+            document.getElementById('successful-steps').textContent = stats.successful_steps;
+            document.getElementById('failed-steps').textContent = stats.failed_steps;
+            document.getElementById('success-rate').textContent = (stats.success_rate * 100).toFixed(1) + '%';
+            document.getElementById('screenshot-count').textContent = stats.screenshots_count;
+        }
+
+        // 显示时间线
+        function displayTimeline() {
+            const timeline = document.getElementById('timeline');
+            const steps = reportData.steps || [];
+
+            steps.forEach((step, index) => {
+                const timelineItem = createTimelineItem(step, index);
+                timeline.appendChild(timelineItem);
+            });
+        }
+
+        // 创建时间线项目
+        function createTimelineItem(step, index) {
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+
+            // 时间点
+            const dot = document.createElement('div');
+            dot.className = 'timeline-dot';
+            if (step.step_type === 'error' || !step.success) {
+                dot.classList.add('error');
+            } else if (step.step_type === 'thinking') {
+                dot.classList.add('thinking');
+            } else {
+                dot.classList.add('success');
+            }
+
+            // 内容
+            const content = document.createElement('div');
+            content.className = 'timeline-content';
+
+            // 步骤类型
+            const typeBadge = document.createElement('span');
+            typeBadge.className = `badge step-type-badge me-2 bg-${getTypeColor(step.step_type)}`;
+            typeBadge.textContent = step.step_type;
+
+            // 步骤编号
+            const stepNumber = document.createElement('h6');
+            stepNumber.className = 'mb-2';
+            stepNumber.innerHTML = `步骤 ${step.step_number} ${typeBadge.outerHTML}`;
+
+            // 时间戳
+            const timestamp = document.createElement('small');
+            timestamp.className = 'text-muted d-block mb-2';
+            timestamp.textContent = new Date(step.created_at).toLocaleString();
+
+            // 思考过程
+            let thinkingHtml = '';
+            if (step.thinking) {
+                thinkingHtml = `
+                    <div class="thinking-text">
+                        <i class="bi bi-lightbulb me-1"></i>
+                        ${step.thinking.substring(0, 200)}${step.thinking.length > 200 ? '...' : ''}
+                    </div>
+                `;
+            }
+
+            // 截图
+            let screenshotHtml = '';
+            if (step.screenshot_path || step.screenshot_url) {
+                // Prefer Supabase URL, fallback to local path
+                let screenshotSrc = step.screenshot_url || `/screenshots/${step.screenshot_path.split('/').pop()}`;
+                let screenshotPath = step.screenshot_path || step.screenshot_url; // For download
+
+                screenshotHtml = `
+                    <div class="mt-2">
+                        <img src="${screenshotSrc}"
+                             class="screenshot-preview"
+                             onclick="showScreenshot('${screenshotPath}')"
+                             alt="步骤截图">
+                        ${step.screenshot_url ? '<div class="mt-1"><small class="text-muted"><i class="bi bi-cloud"></i> 来自云端</small></div>' : ''}
+                    </div>
+                `;
+            }
+
+            // 错误信息
+            let errorHtml = '';
+            if (!step.success && step.error_message) {
+                errorHtml = `
+                    <div class="alert alert-danger mt-2">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        ${step.error_message}
+                    </div>
+                `;
+            }
+
+            content.innerHTML = `
+                ${stepNumber.outerHTML}
+                ${timestamp.outerHTML}
+                ${thinkingHtml}
+                ${step.step_data ? `<pre class="bg-light p-2 rounded small">${JSON.stringify(step.step_data, null, 2)}</pre>` : ''}
+                ${screenshotHtml}
+                ${errorHtml}
+                ${step.duration_ms ? `<small class="text-muted">耗时: ${step.duration_ms}ms</small>` : ''}
+            `;
+
+            item.appendChild(dot);
+            item.appendChild(content);
+
+            return item;
+        }
+
+        // 显示截图
+        function displayScreenshots() {
+            const grid = document.getElementById('screenshots-grid');
+            const screenshots = reportData.screenshots || [];
+
+            screenshots.forEach((screenshot, index) => {
+                const col = document.createElement('div');
+                col.className = 'col-md-3 mb-3';
+
+                const card = document.createElement('div');
+                card.className = 'card';
+
+                const img = document.createElement('img');
+                img.src = `/screenshots/${screenshot.screenshot_path.split('/').pop()}`;
+                img.className = 'card-img-top screenshot-preview';
+                img.style.height = '150px';
+                img.style.objectFit = 'cover';
+                img.onclick = () => showScreenshot(screenshot.screenshot_path);
+                img.alt = `截图 ${index + 1}`;
+
+                const cardBody = document.createElement('div');
+                cardBody.className = 'card-body p-2';
+                cardBody.innerHTML = `
+                    <small class="text-muted d-block">
+                        <i class="bi bi-clock me-1"></i>
+                        ${new Date(screenshot.created_at).toLocaleString()}
+                    </small>
+                    ${screenshot.file_size ? `<small class="text-muted">大小: ${(screenshot.file_size / 1024).toFixed(1)}KB</small>` : ''}
+                `;
+
+                card.appendChild(img);
+                card.appendChild(cardBody);
+                col.appendChild(card);
+                grid.appendChild(col);
+            });
+        }
+
+        // 显示截图大图
+        function showScreenshot(path) {
+            const modal = new bootstrap.Modal(document.getElementById('screenshotModal'));
+            const img = document.getElementById('modalScreenshot');
+            const downloadLink = document.getElementById('downloadScreenshot');
+
+            img.src = `/screenshots/${path.split('/').pop()}`;
+            downloadLink.href = `/screenshots/${path.split('/').pop()}`;
+            downloadLink.download = path.split('/').pop();
+
+            modal.show();
+        }
+
+        // 获取步骤类型颜色
+        function getTypeColor(type) {
+            const colors = {
+                'thinking': 'secondary',
+                'action': 'primary',
+                'screenshot': 'info',
+                'error': 'danger',
+                'validation': 'success',
+                'completion': 'success'
+            };
+            return colors[type] || 'secondary';
+        }
+
+        // 导出报告
+        function exportReport(format) {
+            if (format === 'pdf') {
+                window.print();
+            }
+        }
+
+        // 显示错误
+        function showError(message) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-danger alert-dismissible';
+            alert.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.querySelector('.container').insertBefore(alert, document.querySelector('.container').firstChild);
+        }
+    </script>
+</body>
+</html>

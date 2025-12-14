@@ -10,6 +10,7 @@ import json
 import asyncio
 import threading
 import pickle
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -69,11 +70,50 @@ except ImportError:
         def global_task_id(self) -> str:
             return self.task_id
 
+# Initialize global logger
+logger = logging.getLogger(__name__)
+
 try:
     from script_manager import ScriptManager
     SCRIPT_MANAGER_AVAILABLE = True
 except ImportError:
     SCRIPT_MANAGER_AVAILABLE = False
+
+
+# Helper functions for step tracking
+def calculate_file_hash(file_path: str) -> str:
+    """
+    Calculate MD5 hash of a file.
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        MD5 hash as a hex string
+    """
+    import hashlib
+    try:
+        with open(file_path, 'rb') as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except Exception as e:
+        logger.error(f"Failed to calculate file hash: {e}")
+        return ""
+
+
+def get_file_size(file_path: str) -> int:
+    """
+    Get file size in bytes.
+
+    Args:
+        file_path: Path to the file
+
+    Returns:
+        File size in bytes, 0 if file doesn't exist
+    """
+    try:
+        return os.path.getsize(file_path)
+    except Exception:
+        return 0
 
 
 class PhoneAgentWeb:
@@ -247,9 +287,30 @@ class PhoneAgentWeb:
             }
         }
 
+        # Setup logger
+        self.logger = logging.getLogger(__name__)
+
+        # Setup custom template filters
+        self.setup_template_filters()
+
         # Setup routes
         self.setup_routes()
         self.setup_socketio()
+
+    def setup_template_filters(self):
+        """Setup custom Jinja2 template filters"""
+
+        @self.app.template_filter('datetimeformat')
+        def datetimeformat(value, format='%Y-%m-%d %H:%M:%S'):
+            """Format datetime value"""
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                except:
+                    return value
+            return value.strftime(format)
 
     def setup_routes(self):
         """Setup Flask routes"""
@@ -341,8 +402,16 @@ class PhoneAgentWeb:
 
         @self.app.route('/screenshots/<path:filename>')
         def serve_screenshot(filename):
-            """Serve screenshot files"""
-            return send_from_directory(self.app.config['SCREENSHOTS_FOLDER'], filename)
+            """Serve screenshot files with Supabase fallback"""
+            # First try local file
+            local_path = os.path.join(self.app.config['SCREENSHOTS_FOLDER'], filename)
+            if os.path.exists(local_path):
+                return send_from_directory(self.app.config['SCREENSHOTS_FOLDER'], filename)
+
+            # If not found locally, try to fetch from Supabase Storage
+            # This would require additional implementation
+            from flask import abort
+            abort(404, description="Screenshot not found locally and Supabase fallback not implemented")
 
         @self.app.route('/uploads/<path:filename>')
         def serve_upload(filename):
@@ -384,6 +453,113 @@ class PhoneAgentWeb:
                 return jsonify({'message': 'Task stopped successfully'})
             else:
                 return jsonify({'error': 'Task not found or cannot be stopped'}), 404
+
+        # Step tracking API endpoints
+        @self.app.route('/api/tasks/<task_id>/steps', methods=['GET'])
+        def get_task_steps(task_id):
+            """Get all steps for a task"""
+            try:
+                limit = request.args.get('limit', type=int)
+                page = request.args.get('page', 1, type=int)
+                per_page = min(request.args.get('per_page', 20, type=int), 100)
+
+                # Get steps from database
+                steps = global_task_manager.get_task_steps(task_id, limit)
+
+                # Pagination
+                total_steps = len(steps)
+                start_idx = (page - 1) * per_page
+                end_idx = start_idx + per_page
+                paginated_steps = steps[start_idx:end_idx]
+
+                return jsonify({
+                    'data': {
+                        'steps': paginated_steps,
+                        'pagination': {
+                            'page': page,
+                            'per_page': per_page,
+                            'total': total_steps,
+                            'pages': (total_steps + per_page - 1) // per_page
+                        }
+                    }
+                })
+            except Exception as e:
+                return jsonify({'error': f'Failed to get task steps: {str(e)}'}), 500
+
+        @self.app.route('/api/tasks/<task_id>/report', methods=['GET'])
+        def get_task_report(task_id):
+            """Generate task execution report"""
+            try:
+                # Get report data
+                report_data = global_task_manager.get_step_report_data(task_id)
+
+                if not report_data['task']:
+                    return jsonify({'error': 'Task not found'}), 404
+
+                # Calculate statistics
+                steps = report_data['steps']
+                total_steps = len(steps)
+                successful_steps = len([s for s in steps if s.get('success', True)])
+                failed_steps = total_steps - successful_steps
+                total_duration = sum(s.get('duration_ms', 0) for s in steps)
+
+                report = {
+                    'task': report_data['task'],
+                    'steps': steps,
+                    'screenshots': report_data['screenshots'],
+                    'statistics': {
+                        'total_steps': total_steps,
+                        'successful_steps': successful_steps,
+                        'failed_steps': failed_steps,
+                        'success_rate': successful_steps / max(total_steps, 1),
+                        'total_duration_ms': total_duration,
+                        'average_step_duration_ms': total_duration / max(total_steps, 1),
+                        'screenshots_count': len(report_data['screenshots'])
+                    }
+                }
+
+                return jsonify({'data': report})
+            except Exception as e:
+                return jsonify({'error': f'Failed to generate task report: {str(e)}'}), 500
+
+        @self.app.route('/api/tasks/<task_id>/screenshots', methods=['GET'])
+        def get_task_screenshots(task_id):
+            """Get all screenshots for a task"""
+            try:
+                screenshots = global_task_manager.get_step_screenshots(task_id)
+
+                # Group screenshots by step
+                screenshots_by_step = {}
+                for screenshot in screenshots:
+                    step_id = screenshot.get('step_id')
+                    if step_id not in screenshots_by_step:
+                        screenshots_by_step[step_id] = []
+                    screenshots_by_step[step_id].append(screenshot)
+
+                return jsonify({
+                    'data': {
+                        'screenshots': screenshots,
+                        'grouped_by_step': screenshots_by_step,
+                        'total_count': len(screenshots)
+                    }
+                })
+            except Exception as e:
+                return jsonify({'error': f'Failed to get task screenshots: {str(e)}'}), 500
+
+        # Task report page
+        @self.app.route('/tasks/<task_id>/report')
+        def task_report_page(task_id):
+            """Render task report page"""
+            try:
+                # Get task basic info
+                task = global_task_manager.get_task(task_id)
+                if not task:
+                    return render_template('404.html'), 404
+
+                return render_template('task_report.html', task=task)
+            except Exception as e:
+                logger.error(f"Error rendering task report page: {e}")
+                return render_template('error.html', error=str(e)), 500
 
         @self.app.route('/api/tasks/<task_id>', methods=['GET'])
         def get_task(task_id):
@@ -687,6 +863,52 @@ class PhoneAgentWeb:
                 global_task_info = global_task_manager.get_task(task_id)
                 if global_task_info and global_task_info.status == 'stopped':
                     raise Exception("Task stopped by user")
+
+                # Save step to database if Supabase is available
+                if SUPABASE_AVAILABLE and hasattr(global_task_manager, 'save_step'):
+                    try:
+                        # Prepare step record for database
+                        step_record = {
+                            'step_id': step_data.get('step_id'),
+                            'task_id': step_data.get('task_id'),
+                            'step_number': step_data.get('step_number'),
+                            'step_type': 'completion' if step_data.get('finished') else 'action',
+                            'step_data': {
+                                'action': step_data.get('action'),
+                                'result': self._serialize_result(step_data.get('result'))
+                            },
+                            'thinking': step_data.get('thinking'),
+                            'action_result': self._serialize_result(step_data.get('result')),
+                            'screenshot_path': step_data.get('screenshot_path'),
+                            'success': step_data.get('success'),
+                            'created_at': datetime.now().isoformat()
+                        }
+
+                        # Save step to task_steps table
+                        global_task_manager.save_step(step_record)
+
+                        # Save screenshot information to step_screenshots table
+                        screenshot_path = step_data.get('screenshot_path')
+                        if screenshot_path and os.path.exists(screenshot_path):
+                            screenshot_record = {
+                                'id': str(uuid.uuid4()),
+                                'task_id': step_data.get('task_id'),
+                                'step_id': step_data.get('step_id'),
+                                'screenshot_path': screenshot_path,
+                                'file_size': get_file_size(screenshot_path),
+                                'file_hash': calculate_file_hash(screenshot_path),
+                                'compressed': False,
+                                'created_at': datetime.now().isoformat()
+                            }
+
+                            global_task_manager.save_step_screenshot(screenshot_record)
+                            if agent_config.get('verbose', False):
+                                print(f"💾 Saved step {step_data.get('step_number')} to database")
+
+                    except Exception as db_error:
+                        # Log error but don't interrupt task execution
+                        print(f"⚠️ Failed to save step to database: {db_error}")
+                        logging.error(f"Step database save error: {db_error}")
 
                 # Convert non-serializable objects to serializable format
                 serializable_step = {

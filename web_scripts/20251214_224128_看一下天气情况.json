@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "task_name": "看一下天气情况",
+    "description": "看一下天气情况",
+    "created_at": "2025-12-14T22:41:20.714581",
+    "total_steps": 1,
+    "device_id": null,
+    "model_name": "autoglm-phone",
+    "success_rate": 0.0,
+    "execution_time": 7.74
+  },
+  "steps": [
+    {
+      "step_number": 1,
+      "action_type": "Launch",
+      "action_data": {
+        "action": "Launch",
+        "app": "天气",
+        "_metadata": "do"
+      },
+      "thinking": "用户想要查看天气情况。我需要打开天气应用。从允许的应用列表中，我看到有\"天气\"这个应用。我应该使用Launch功能来打开它。\n\n当前屏幕显示的是系统桌面，显示日期是2025年12月14日星期日。我需要启动天气应用。",
+      "screenshot_path": "screenshots/step_001.png",
+      "timestamp": "2025-12-14T22:41:28.453253",
+      "success": false,
+      "error_message": "App not found: 天气"
+    }
+  ]
+}

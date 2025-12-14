@@ -21,12 +21,165 @@
 https://raw.githubusercontent.com/zai-org/Open-AutoGLM/refs/heads/main/README.md
 ```
 
+## 🌐 Web 界面使用指南（推荐方式）
+
+Open-AutoGLM 提供了现代化的 Web 界面，让手机自动化变得像聊天一样简单。
+
+### 快速启动
+
+#### 1. 启动 Web 服务
+
+```bash
+# 使用启动脚本（推荐）
+python web_start.py
+
+# 指定端口启动
+python web_start.py --port 8080
+```
+
+#### 2. 访问界面
+
+打开浏览器访问：**http://localhost:5000**
+
+### 主要功能
+
+#### 🗣️ 对话式交互
+- 在底部输入框描述任务，如："打开小红书搜索美食攻略"
+- 支持多轮对话，可以连续提出多个任务
+- 实时显示任务执行状态和结果
+
+#### 📱 设备管理
+- 自动检测已连接的 ADB 设备
+- 实时显示设备连接状态
+- 支持远程 WiFi 连接设备
+
+#### 📸 实时监控
+- **状态面板**: 显示当前任务状态、执行步数、耗时
+- **截图预览**: 实时显示操作过程中的手机截图
+- **执行历史**: 查看之前的任务记录和结果
+
+#### ⚙️ 配置管理
+- **模型配置**: 支持本地模型、智谱BigModel、ModelScope
+- **设备设置**: 选择特定设备或自动检测
+- **执行参数**: 调整最大步数、详细输出等
+
+### 界面布局
+
+```
+┌─────────────────────────────────┬─────────────────────────────────┐
+│                                 │                                 │
+│         对话区域                 │         状态面板                 │
+│   ┌─────────────────────────┐   │   ┌─────────────────────────┐   │
+│   │     历史对话记录         │   │   │     执行状态             │   │
+│   │                         │   │   │     设备信息             │   │
+│   │                         │   │   │     实时截图             │   │
+│   └─────────────────────────┘   │   └─────────────────────────┘   │
+│                                 │                                 │
+│   ┌─────────────────────────┐   │                                 │
+│   │   任务输入框 [发送]     │   │                                 │
+│   └─────────────────────────┘   │                                 │
+│                                 │                                 │
+└─────────────────────────────────┴─────────────────────────────────┘
+```
+
+### 预设配置
+
+Web 界面内置了三个预设配置：
+
+1. **本地模型**: `http://localhost:8000/v1` (需要本地部署)
+2. **智谱BigModel**: 直接使用，需要 API Key
+3. **ModelScope**: 直接使用，需要 API Key
+
+### 高级功能
+
+#### 📊 任务执行报告
+- 点击已完成任务的"报告"按钮
+- 查看详细的执行时间线
+- 回放每个步骤的截图和思考过程
+
+#### 🔄 实时状态推送
+- WebSocket 实时连接
+- 任务状态实时更新
+- 步骤执行进度实时显示
+
+#### 💾 数据持久化
+- 任务数据自动保存到云端数据库
+- 截图文件上传到云存储
+- 支持历史数据查询和分析
+
+### 故障排除
+
+**启动失败**:
+```bash
+# 检查依赖
+pip install -r requirements-web.txt
+
+# 检查端口占用
+python web_start.py --port 8080
+```
+
+**设备连接问题**:
+- 确保 USB 调试已开启
+- 检查设备是否已授权
+- 尝试重新连接设备
+
+**模型连接失败**:
+- 验证模型服务地址
+- 检查 API Key 是否正确
+- 确认网络连接正常
+
+详细使用说明请参考：[Web Interface 文档](docs/WEB_INTERFACE.md)
+
 ## 项目介绍
 
-Phone Agent 是一个基于 AutoGLM 构建的手机端智能助理框架，它能够以多模态方式理解手机屏幕内容，并通过自动化操作帮助用户完成任务。系统通过
-ADB(Android Debug Bridge)来控制设备，以视觉语言模型进行屏幕感知，再结合智能规划能力生成并执行操作流程。用户只需用自然语言描述需求，如“打开小红书搜索美食”，Phone
-Agent 即可自动解析意图、理解当前界面、规划下一步动作并完成整个流程。系统还内置敏感操作确认机制，并支持在登录或验证码场景下进行人工接管。同时，它提供远程
-ADB 调试能力，可通过 WiFi 或网络连接设备，实现灵活的远程控制与开发。
+Open-AutoGLM 是一个企业级手机自动化智能平台，基于先进的 AutoGLM 视觉语言模型构建。它能够以多模态方式理解手机屏幕内容，并通过自动化操作帮助用户完成复杂任务。
+
+### 🌟 核心特性
+
+#### 🌐 现代化 Web 界面
+- **直观操作**: 基于 Bootstrap 5 的响应式 Web 界面
+- **实时监控**: WebSocket 实时推送任务执行状态和进度
+- **多轮对话**: 支持连续的对话交互，像聊天一样使用
+- **截图预览**: 实时显示操作过程中的手机截图
+
+#### ☁️ 云原生架构
+- **Supabase 集成**: 云数据库存储，支持多设备访问
+- **双重存储**: 本地 + 云端截图存储，确保数据安全
+- **实时同步**: 任务数据跨设备实时同步
+- **可观测性**: 详细的步骤跟踪和执行报告
+
+#### 🤖 智能自动化
+- **视觉理解**: 先进的多模态模型理解屏幕内容
+- **智能规划**: 自动分解任务并生成执行步骤
+- **50+ 应用支持**: 微信、淘宝、抖音等主流应用全覆盖
+- **学习能力**: 支持复杂的多步骤任务执行
+
+#### 📊 执行监控
+- **步骤跟踪**: 详细记录每个执行步骤的思考和动作
+- **性能分析**: 任务执行时间和成功率统计
+- **错误诊断**: 完善的错误提示和处理机制
+- **历史记录**: 完整的任务执行历史回放
+
+### 💡 使用场景
+
+- **日常效率**: 自动发送消息、查看天气、设置闹钟
+- **电商比价**: 在多个平台间比较价格并自动下单
+- **内容创作**: 自动发布社交媒体内容
+- **数据收集**: 自动抓取应用数据并整理
+- **测试自动化**: 移动应用的功能测试和回归测试
+
+### 🚀 快速体验
+
+1. **Web 界面（推荐）**:
+   ```bash
+   python web_start.py
+   # 访问 http://localhost:5000
+   ```
+
+2. **命令行方式**:
+   ```bash
+   python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开微信查看未读消息"
+   ```
 
 > ⚠️
 > 本项目仅供研究和学习使用。严禁用于非法获取信息、干扰系统或任何违法活动。请仔细审阅 [使用条款](resources/privacy_policy.txt)。
@@ -77,16 +230,55 @@ ADB 调试能力，可通过 WiFi 或网络连接设备，实现灵活的远程�
 下载 [安装包](https://github.com/senzhk/ADBKeyBoard/blob/master/ADBKeyboard.apk) 并在对应的安卓设备中进行安装。
 注意，安装完成后还需要到 `设置-输入法` 或者 `设置-键盘列表` 中启用 `ADB Keyboard` 才能生效(或使用命令`adb shell ime enable com.android.adbkeyboard/.AdbIME`[How-to-use](https://github.com/senzhk/ADBKeyBoard/blob/master/README.md#how-to-use))
 
+### 5. 云服务准备（可选，推荐）
+
+为了获得完整功能体验，建议准备 Supabase 云服务：
+
+#### Supabase 账号
+1. 访问 [Supabase 官网](https://supabase.com) 注册账号
+2. 创建新项目（推荐选择离你最近的区域）
+3. 获取项目的 URL 和 Service Role Key
+
+#### 功能说明
+- ✅ **数据持久化**: 任务记录、执行步骤自动保存
+- ✅ **云端截图**: 截图文件自动上传到云存储
+- ✅ **跨设备同步**: 数据在多个设备间实时同步
+- ✅ **历史分析**: 长期使用数据分析和报告
+
+> 💡 **注意**: 如果暂不配置云服务，系统会自动降级到本地存储模式，核心功能不受影响。
+
 ## 部署准备工作
 
-### 1. 安装依赖
+### 1. 安装基础依赖
 
 ```bash
-pip install -r requirements.txt 
+# 安装核心依赖
+pip install -r requirements.txt
 pip install -e .
+
+# 安装 Web 界面依赖（推荐）
+pip install -r requirements-web.txt
 ```
 
-### 2. 配置 ADB
+> 💡 **提示**: `requirements-web.txt` 包含 Flask、WebSocket 等Web界面必需的依赖包。
+
+### 2. 快速启动（推荐）
+
+#### Web 界面方式
+```bash
+# 一键启动 Web 界面
+python web_start.py
+
+# 访问 http://localhost:5000 开始使用
+```
+
+#### 命令行方式
+```bash
+# 使用第三方服务（需要 API Key）
+python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
+```
+
+### 3. 配置 ADB
 
 确认 **USB数据线具有数据传输功能**, 而不是仅有充电功能
 
@@ -101,7 +293,7 @@ adb devices
 # emulator-5554   device
 ```
 
-### 3. 启动模型服务
+### 4. 启动模型服务
 
 你可以选择自行部署模型服务，或使用第三方模型服务商。
 
@@ -232,21 +424,41 @@ python scripts/check_deployment_cn.py --base-url http://你的IP:你的端口/v1
 
 ## 使用 AutoGLM
 
-### 命令行
+### 🌐 Web 界面（推荐）
 
-根据你部署的模型, 设置 `--base-url` 和 `--model` 参数. 例如:
+Web 界面提供了最直观的使用体验，支持实时监控和多轮对话：
 
 ```bash
+# 启动 Web 界面
+python web_start.py
+
+# 浏览器访问 http://localhost:5000
+```
+
+**主要优势**:
+- 🎯 **像聊天一样使用**: 自然语言对话交互
+- 📱 **实时监控**: 查看执行状态和截图
+- 📊 **任务报告**: 详细的执行步骤分析
+- ⚙️ **可视化配置**: 图形化的参数设置
+- 🔄 **历史记录**: 所有任务自动保存
+
+### 💻 命令行（进阶用户）
+
+对于自动化脚本和批量处理场景，可以使用命令行方式：
+
+根据你部署的模型，设置 `--base-url` 和 `--model` 参数：
+
+```bash
+# 单次任务执行
+python main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b" "打开美团搜索附近的火锅店"
+
 # 交互模式
 python main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b"
 
-# 指定模型端点
-python main.py --base-url http://localhost:8000/v1 "打开美团搜索附近的火锅店"
+# 使用第三方服务（智谱BigModel）
+python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
 
-# 使用 API Key 进行认证
-python main.py --apikey sk-xxxxx
-
-# 使用英文 system prompt
+# 使用英文界面
 python main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browser"
 
 # 列出支持的应用
@@ -440,37 +652,237 @@ python main.py --record-script "打开设置调整音量到最大"
 
 详细文档请参考：[SCRIPT_RECORDING.md](SCRIPT_RECORDING.md)
 
-## 🌐 Web 界面
+## ☁️ 云集成配置
 
-Phone Agent 现在支持现代化的 Web 界面，提供更直观的用户体验：
+Open-AutoGLM 支持 Supabase 云服务集成，提供数据持久化、云端存储和多设备同步功能。
 
-### 功能特性
-- **多轮对话**: 支持连续的对话交互
-- **实时监控**: WebSocket 实时推送执行状态
-- **截图显示**: 实时显示操作过程中的手机截图
-- **配置管理**: 可视化配置模型和设备参数
-- **状态追踪**: 详细的执行步骤和性能统计
+### 快速配置
 
-### 快速启动
+#### 1. 创建 Supabase 项目
+
+1. 访问 [Supabase 官网](https://supabase.com) 并登录
+2. 点击 "New Project" 创建新项目
+3. 选择组织和数据库配置
+4. 记录项目的 **URL** 和 **Service Role Key**
+
+#### 2. 环境变量配置
+
+在项目根目录创建 `.env` 文件：
 
 ```bash
-# 安装 Web 依赖
-pip install -r requirements-web.txt
-
-# 启动 Web 服务
-python web_start.py
-
-# 访问界面
-# 浏览器打开: http://localhost:5000
+# Supabase 配置
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_SECRET_KEY=your-service-role-key
 ```
 
-### 界面功能
-- **主界面**: 聊天式的任务交互界面
-- **配置页面**: 模型和设备参数设置
-- **实时状态**: 执行进度和截图显示
-- **设备管理**: ADB 设备连接状态
+或者在启动时直接设置：
+
+```bash
+export SUPABASE_URL=https://your-project-id.supabase.co
+export SUPABASE_SECRET_KEY=your-service-role-key
+python web_start.py
+```
+
+#### 3. 数据库初始化
+
+首次使用时，系统会自动创建必要的数据库表：
+
+- `tasks` - 任务记录
+- `task_steps` - 执行步骤详情
+- `step_screenshots` - 截图文件信息
+
+> 💡 **自动迁移**: 无需手动执行SQL，系统会自动处理数据库结构。
+
+### 云服务功能
+
+#### 🗄️ 数据持久化
+- **任务记录**: 所有任务自动保存到云端数据库
+- **执行步骤**: 详细的步骤跟踪数据持久化存储
+- **配置信息**: 用户配置跨设备同步
+
+#### 📸 云端截图存储
+- **自动上传**: 截图时自动上传到 Supabase Storage
+- **双重存储**: 本地 + 云端，确保数据安全
+- **智能压缩**: 自动压缩大图片，节省存储空间
+- **CDN加速**: 支持全球快速访问
+
+#### 🔄 多设备同步
+- **实时同步**: 任务数据在多个设备间实时同步
+- **跨平台访问**: 通过Web界面在不同设备上访问历史数据
+- **配置共享**: 模型配置和设备设置自动同步
+
+#### 📊 数据分析
+- **使用统计**: 任务执行次数、成功率等统计信息
+- **性能分析**: 执行时间、步数等性能指标
+- **趋势报告**: 长期使用趋势分析
+
+### 配置验证
+
+#### 检查连接状态
+```bash
+# Web 界面中会显示连接状态
+# 绿色：已连接云服务
+# 黄色：使用本地存储模式
+# 红色：连接失败
+```
+
+#### 测试数据上传
+```bash
+# 执行一个简单任务测试
+python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开设置"
+```
+
+检查云数据库中是否出现新的任务记录。
+
+### 高级配置
+
+#### 自定义存储桶
+默认使用 `AutoGLMStorage` 存储桶，可以自定义：
+```python
+# 在 web/supabase_manager.py 中修改
+STORAGE_BUCKET_NAME = "your-custom-bucket"
+```
+
+#### 数据保留策略
+```python
+# 设置数据保留天数
+DATA_RETENTION_DAYS = 30
+
+# 设置截图保留策略
+SCREENSHOT_RETENTION_DAYS = 7
+```
+
+#### 批量上传历史截图
+```bash
+# 上传本地所有截图到云端
+python tools/bulk_upload_screenshots.py
+
+# 预览模式（不实际上传）
+python tools/bulk_upload_screenshots.py --dry-run
+```
+
+### 故障排除
+
+#### 连接失败
+- 检查 Supabase URL 和 Key 是否正确
+- 确认网络连接正常
+- 验证 Supabase 项目状态
+
+#### 上传失败
+- 检查 Storage 权限设置
+- 确认存储桶配额未超限
+- 查看详细错误日志
+
+#### 数据同步问题
+- 检查设备时间同步
+- 确认环境变量配置正确
+- 重启服务重新连接
+
+详细配置说明请参考：
+- [步骤持久化指南](docs/step_persistence_guide.md)
+- [截图上传指南](docs/supabase_screenshot_upload_guide.md)
+
+## 🌐 Web 界面概述
+
+Open-AutoGLM 的 Web 界面提供了现代化的用户体验，支持实时监控和多轮对话。
+
+### 核心功能
+- 🗣️ **对话式交互**: 像聊天一样使用自然语言描述任务
+- 📱 **实时监控**: WebSocket 实时推送执行状态和截图
+- 📊 **任务报告**: 详细的执行步骤分析和性能统计
+- ⚙️ **可视化配置**: 图形化的模型和设备参数设置
+
+快速启动请参考：[🌐 Web 界面使用指南](#-web-界面使用指南推荐方式)
 
 详细使用说明请参考：[WEB_INTERFACE.md](WEB_INTERFACE.md)
+
+## 📊 任务执行监控
+
+Open-AutoGLM 提供了完整的任务执行可观测性系统，让您能够详细了解每个任务的执行过程。
+
+### 步骤跟踪系统
+
+#### 🔍 详细记录
+- **AI 思考过程**: 记录每个决策点的分析过程
+- **执行动作**: 详细记录点击、滑动、输入等操作
+- **执行结果**: 记录每个操作的成功/失败状态
+- **耗时统计**: 精确记录每个步骤的执行时间
+- **截图关联**: 自动关联执行步骤与界面截图
+
+#### 📈 性能分析
+- **成功率统计**: 任务和步骤级别的成功率分析
+- **执行时间分析**: 平均执行时间、性能瓶颈识别
+- **错误模式识别**: 常见错误类型和频率统计
+- **优化建议**: 基于历史数据的性能优化建议
+
+### 任务执行报告
+
+#### 📑 报告内容
+- **执行时间线**: 按时间顺序展示所有执行步骤
+- **截图回放**: 像翻书一样查看任务执行过程
+- **思考链条**: 完整展示 AI 的决策过程
+- **错误诊断**: 失败步骤的详细错误分析
+
+#### 📊 统计数据
+```
+任务: 打开小红书搜索美食
+总步骤: 12 步
+成功步骤: 11 步
+失败步骤: 1 步
+成功率: 91.7%
+总耗时: 45.2 秒
+平均步骤耗时: 3.8 秒
+```
+
+### 查看方式
+
+#### Web 界面（推荐）
+1. 执行任务后，在对话历史中点击"报告"按钮
+2. 查看详细的执行时间线和截图回放
+3. 分析性能统计数据和优化建议
+
+#### API 接口
+```bash
+# 获取任务步骤
+GET /api/tasks/{task_id}/steps
+
+# 获取任务报告
+GET /api/tasks/{task_id}/report
+
+# 获取任务截图
+GET /api/tasks/{task_id}/screenshots
+```
+
+### 数据持久化
+
+#### 💾 云端存储
+- 所有步骤数据自动保存到 Supabase 数据库
+- 支持历史数据查询和分析
+- 跨设备同步访问历史记录
+
+#### 📸 截图管理
+- 截图自动上传到云端存储
+- 支持批量上传和历史截图迁移
+- 智能压缩节省存储空间
+
+### 使用场景
+
+#### 🧪 调试和优化
+- 分析任务失败原因，优化操作流程
+- 识别性能瓶颈，提升执行效率
+- 对比不同任务策略的效果
+
+#### 📋 自动化测试
+- 记录测试执行过程，便于问题定位
+- 生成测试报告，验证应用功能
+- 监控测试覆盖率和质量指标
+
+#### 📈 业务分析
+- 统计常用功能和操作模式
+- 分析用户行为和系统使用情况
+- 生成业务洞察和改进建议
+
+详细技术说明请参考：[步骤持久化指南](docs/step_persistence_guide.md)
 
 ## 远程调试
 
@@ -569,6 +981,7 @@ conn.disconnect("192.168.1.100:5555")
 
 ### 环境变量
 
+#### 核心配置
 | 变量                           | 描述                    | 默认值                        |
 |------------------------------|-----------------------|----------------------------|
 | `PHONE_AGENT_BASE_URL`       | 模型 API 地址            | `http://localhost:8000/v1` |
@@ -577,8 +990,33 @@ conn.disconnect("192.168.1.100:5555")
 | `PHONE_AGENT_MAX_STEPS`      | 每个任务最大步数             | `100`                      |
 | `PHONE_AGENT_DEVICE_ID`      | ADB 设备 ID            | (自动检测)                     |
 | `PHONE_AGENT_LANG`           | 语言 (`cn` 或 `en`)      | `cn`                       |
+
+#### 脚本记录
+| 变量                           | 描述                    | 默认值                        |
+|------------------------------|-----------------------|----------------------------|
 | `PHONE_AGENT_RECORD_SCRIPT`  | 是否启用脚本记录            | `false`                    |
 | `PHONE_AGENT_SCRIPT_OUTPUT_DIR` | 脚本输出目录               | `scripts`                  |
+
+#### 🌐 Web 界面配置
+| 变量                           | 描述                    | 默认值                        |
+|------------------------------|-----------------------|----------------------------|
+| `PHONE_AGENT_WEB_HOST`       | Web 服务监听地址          | `0.0.0.0`                  |
+| `PHONE_AGENT_WEB_PORT`       | Web 服务端口              | `5000`                     |
+| `PHONE_AGENT_WEB_DEBUG`      | 是否启用调试模式            | `false`                    |
+
+#### ☁️ 云集成配置
+| 变量                           | 描述                    | 默认值                        |
+|------------------------------|-----------------------|----------------------------|
+| `SUPABASE_URL`               | Supabase 项目 URL       | (空，表示禁用云功能)              |
+| `SUPABASE_SECRET_KEY`        | Supabase 服务角色密钥      | (空，表示禁用云功能)              |
+| `SCREENSHOT_AUTO_UPLOAD`     | 是否自动上传截图到云端        | `true`                     |
+
+#### 📊 监控和跟踪
+| 变量                           | 描述                    | 默认值                        |
+|------------------------------|-----------------------|----------------------------|
+| `STEP_TRACKING_ENABLED`      | 是否启用步骤跟踪            | `true`                     |
+| `STEP_BUFFER_SIZE`           | 步骤缓冲区大小              | `50`                       |
+| `STEP_FLUSH_INTERVAL`        | 步骤刷新间隔（秒）           | `5.0`                      |
 
 ### 模型配置
 
@@ -607,6 +1045,60 @@ config = AgentConfig(
     verbose=True,  # 打印调试信息(包括思考过程和执行动作)
     record_script=False,  # 是否启用脚本记录
     script_output_dir="scripts",  # 脚本输出目录
+    # 新增配置选项
+    enable_step_tracking=True,  # 启用步骤跟踪
+    screenshot_auto_upload=True,  # 自动上传截图
+    supabase_url="your-supabase-url",  # Supabase URL（可选）
+    supabase_key="your-supabase-key",  # Supabase Key（可选）
+)
+```
+
+### 🌐 Web 界面配置
+
+#### 使用配置文件
+```python
+# web/config.py
+WEB_CONFIG = {
+    'host': '0.0.0.0',
+    'port': 5000,
+    'debug': False,
+    'secret_key': 'your-secret-key',  # 生产环境请设置
+    'cors_origins': ['http://localhost:3000'],  # 允许的跨域源
+}
+```
+
+#### 使用环境变量
+```bash
+# .env 文件
+PHONE_AGENT_WEB_HOST=0.0.0.0
+PHONE_AGENT_WEB_PORT=8080
+PHONE_AGENT_WEB_DEBUG=true
+```
+
+### ☁️ 云集成配置
+
+#### Supabase 配置
+```python
+# web/supabase_manager.py
+SUPABASE_CONFIG = {
+    'url': os.getenv('SUPABASE_URL'),
+    'key': os.getenv('SUPABASE_SECRET_KEY'),
+    'storage_bucket': 'AutoGLMStorage',
+    'retry_attempts': 3,
+    'upload_timeout': 30,
+}
+```
+
+#### 步骤跟踪配置
+```python
+from phone_agent.step_tracker import StepTrackerConfig
+
+config = StepTrackerConfig(
+    buffer_size=50,  # 缓冲区大小
+    flush_interval=5.0,  # 刷新间隔（秒）
+    enable_compression=True,  # 启用数据压缩
+    auto_upload_screenshots=True,  # 自动上传截图
+    local_backup=True,  # 本地备份
 )
 ```
 
@@ -773,6 +1265,67 @@ requirements-web.txt     # Web 界面依赖
 
 我们列举了一些常见的问题，以及对应的解决方案：
 
+### 🌐 Web 界面问题
+
+#### Web 服务启动失败
+```bash
+# 检查依赖是否完整
+pip install -r requirements-web.txt
+
+# 检查端口是否被占用
+netstat -tulpn | grep :5000
+
+# 使用不同端口启动
+python web_start.py --port 8080
+```
+
+#### WebSocket 连接失败
+- **现象**: 界面无法实时更新，显示"连接断开"
+- **解决方案**:
+  1. 刷新浏览器页面
+  2. 检查防火墙设置
+  3. 确认端口没有被阻止
+
+#### 界面显示异常
+- **清除浏览器缓存**: Ctrl+F5 强制刷新
+- **检查浏览器兼容性**: 推荐使用 Chrome、Firefox、Safari
+- **检查控制台错误**: F12 打开开发者工具查看错误信息
+
+### ☁️ 云集成问题
+
+#### Supabase 连接失败
+```bash
+# 检查环境变量
+echo $SUPABASE_URL
+echo $SUPABASE_SECRET_KEY
+
+# 测试连接
+curl -H "Authorization: Bearer $SUPABASE_SECRET_KEY" "$SUPABASE_URL/rest/v1/"
+```
+
+**解决方案**:
+- 验证 Supabase URL 和 Key 格式正确
+- 确认网络连接正常
+- 检查 Supabase 项目状态
+
+#### 截图上传失败
+- **检查存储权限**: 确认 Supabase Storage 已正确配置
+- **查看详细错误**: 检查 Web 服务日志
+- **手动重试**: 使用批量上传工具重新上传
+
+```bash
+# 批量上传工具
+python tools/bulk_upload_screenshots.py --dry-run  # 预览
+python tools/bulk_upload_screenshots.py           # 上传
+```
+
+#### 数据同步问题
+- **检查时间同步**: 确保设备时间正确
+- **重新连接**: 重启 Web 服务重新建立连接
+- **查看数据状态**: 在 Supabase Dashboard 中检查数据表
+
+### 📱 设备连接问题
+
 ### 设备未找到
 
 尝试通过重启 ADB 服务来解决：
@@ -820,6 +1373,46 @@ adb devices
 报错形如: `EOF when reading a line`
 
 解决办法: 使用非交互模式直接指定任务, 或者切换到 TTY 模式的终端应用.
+
+### 🚀 性能问题
+
+#### Web 界面响应慢
+- **检查模型服务**: 确认模型服务正常运行
+- **优化截图**: 调整截图压缩设置
+- **减少缓冲**: 降低步骤跟踪缓冲区大小
+
+#### 内存占用过高
+```bash
+# 监控内存使用
+python -c "import psutil; print(f'Memory: {psutil.virtual_memory().percent}%')"
+
+# 调整缓冲区大小
+export STEP_BUFFER_SIZE=20
+export STEP_FLUSH_INTERVAL=2.0
+```
+
+### 🔧 高级问题排查
+
+#### 调试模式启用
+```bash
+# Web 界面调试
+python web_start.py --debug
+
+# 命令行详细输出
+python main.py --verbose --base-url http://localhost:8000/v1 "测试任务"
+```
+
+#### 日志查看
+```bash
+# 查看 Web 服务日志
+tail -f logs/web.log
+
+# 查看步骤跟踪日志
+tail -f logs/step_tracker.log
+
+# 查看 Supabase 连接日志
+grep "Supabase" logs/app.log
+```
 
 ### 引用
 

@@ -19,6 +19,16 @@ from phone_agent.model import ModelClient, ModelConfig
 from phone_agent.model.client import MessageBuilder
 from phone_agent.recorder import ScriptRecorder
 
+# Import step tracker
+try:
+    from phone_agent.step_tracker import StepTracker, StepType, StepData
+    STEP_TRACKER_AVAILABLE = True
+except ImportError:
+    STEP_TRACKER_AVAILABLE = False
+    StepTracker = None
+    StepType = None
+    StepData = None
+
 # Configure logger
 logger = logging.getLogger(__name__)
 
@@ -145,6 +155,10 @@ class PhoneAgent:
         if self.agent_config.record_script:
             self.recorder = ScriptRecorder(self.agent_config.script_output_dir)
 
+        # Initialize step tracker if available
+        self.step_tracker: StepTracker | None = None
+        # StepTracker will be initialized in run() method after task_id is generated
+
     def run(self, task: str, step_callback: Callable[[dict], None] = None) -> str:
         """
         Run the agent to complete a task.
@@ -158,6 +172,9 @@ class PhoneAgent:
         self._context = []
         self._step_count = 0
 
+        # Generate a task ID for step tracking
+        self._task_id = str(uuid.uuid4())
+
         # Start script recording if enabled
         if self.recorder:
             self.recorder.start_recording(
@@ -165,8 +182,16 @@ class PhoneAgent:
                 device_id=self.agent_config.device_id,
                 model_name=self.model_config.model_name
             )
-            if self.agent_config.verbose:
-                print("📹 Script recording started")
+
+        # Initialize step tracker if available
+        if STEP_TRACKER_AVAILABLE:
+            try:
+                self.step_tracker = StepTracker(self._task_id)
+                if self.agent_config.verbose:
+                    print("📊 Step tracking enabled")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize step tracker: {e}")
+                self.step_tracker = None
 
         try:
             # First step with user prompt
@@ -342,20 +367,46 @@ class PhoneAgent:
 
         # Call step callback if provided
         if step_callback:
+            # Generate unique step ID
+            step_id = str(uuid.uuid4())
+
             # Save screenshot to file
             screenshot_filename = None
+            screenshot_path = None
             if screenshot and screenshot.base64_data:
                 # Determine screenshots directory (relative to web/static/screenshots)
                 # Navigate from phone_agent/ to web/static/screenshots/
                 screenshots_dir = Path(__file__).parent.parent / 'web' / 'static' / 'screenshots'
                 screenshot_filename = _save_screenshot_to_file(screenshot, screenshots_dir)
+                if screenshot_filename:
+                    screenshot_path = str(screenshots_dir / screenshot_filename)
+
+            # Record step in StepTracker if available
+            if self.step_tracker:
+                self.step_tracker.record_step(
+                    step_type=StepType.COMPLETION if finished else StepType.ACTION,
+                    step_data={
+                        'action': action,
+                        'result': {
+                            'success': result.success,
+                            'message': result.message
+                        }
+                    },
+                    thinking=response.thinking,
+                    action_result=result,
+                    screenshot_path=screenshot_path,
+                    success=result.success
+                )
 
             step_data = {
+                'step_id': step_id,
+                'task_id': getattr(self, '_task_id', ''),
                 'step_number': self._step_count,
                 'thinking': response.thinking,
                 'action': action,
                 'result': result,
                 'screenshot': screenshot_filename,  # Send filename instead of base64 data
+                'screenshot_path': screenshot_path,  # Full path for database
                 'success': result.success,
                 'finished': finished
             }

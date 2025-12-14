@@ -529,6 +529,247 @@ class SupabaseTaskManager:
             print(f"清理旧任务时出错: {e}")
             return 0
 
+# Step data management methods
+    def save_step(self, step_data: Dict) -> bool:
+        """保存单个步骤数据"""
+        try:
+            result = self.supabase.table('task_steps').insert(step_data).execute()
+
+            if result.data:
+                logger.debug(f"Step saved: {step_data.get('step_id')}")
+                return True
+            else:
+                logger.error(f"Failed to save step: {step_data.get('step_id')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error saving step: {e}")
+            return False
+
+    def save_steps_batch(self, steps_data: List[Dict]) -> bool:
+        """批量保存步骤数据"""
+        try:
+            result = self.supabase.table('task_steps').insert(steps_data).execute()
+
+            if result.data:
+                logger.info(f"Batch saved {len(steps_data)} steps")
+                return True
+            else:
+                logger.error("Failed to batch save steps")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error batch saving steps: {e}")
+            return False
+
+    def get_task_steps(self, task_id: str, limit: Optional[int] = None) -> List[Dict]:
+        """获取任务的所有步骤"""
+        try:
+            query = self.supabase.table('task_steps')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('step_number', desc=False)
+
+            if limit:
+                query = query.limit(limit)
+
+            result = query.execute()
+
+            if result.data:
+                return result.data
+            else:
+                return []
+
+        except Exception as e:
+            logger.error(f"Error getting task steps: {e}")
+            return []
+
+    def save_step_screenshot(self, screenshot_data: Dict) -> bool:
+        """保存步骤截图信息"""
+        try:
+            result = self.supabase.table('step_screenshots').insert(screenshot_data).execute()
+
+            if result.data:
+                logger.debug(f"Screenshot saved: {screenshot_data.get('id')}")
+                return True
+            else:
+                logger.error(f"Failed to save screenshot: {screenshot_data.get('id')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error saving screenshot: {e}")
+            return False
+
+    def get_step_screenshots(self, task_id: str) -> List[Dict]:
+        """获取任务的所有截图"""
+        try:
+            result = self.supabase.table('step_screenshots')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('created_at', desc=False)\
+                .execute()
+
+            if result.data:
+                return result.data
+            else:
+                return []
+
+        except Exception as e:
+            logger.error(f"Error getting step screenshots: {e}")
+            return []
+
+    def update_task_step_statistics(self, task_id: str, stats: Dict) -> bool:
+        """更新任务步骤统计信息"""
+        try:
+            update_data = {
+                'last_activity': datetime.now().isoformat(),
+                'has_detailed_steps': True
+            }
+            update_data.update(stats)
+
+            result = self.supabase.table('tasks')\
+                .update(update_data)\
+                .eq('task_id', task_id)\
+                .execute()
+
+            if result.data:
+                logger.debug(f"Task statistics updated: {task_id}")
+                return True
+            else:
+                logger.error(f"Failed to update task statistics: {task_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error updating task statistics: {e}")
+            return False
+
+    def get_step_report_data(self, task_id: str) -> Dict:
+        """获取步骤报告数据"""
+        try:
+            # Get task info
+            task_result = self.supabase.table('tasks')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .single()\
+                .execute()
+
+            # Get steps
+            steps_result = self.supabase.table('task_steps')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('step_number', desc=False)\
+                .execute()
+
+            # Get screenshots
+            screenshots_result = self.supabase.table('step_screenshots')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .order('created_at', desc=False)\
+                .execute()
+
+            return {
+                'task': task_result.data if task_result.data else None,
+                'steps': steps_result.data if steps_result.data else [],
+                'screenshots': screenshots_result.data if screenshots_result.data else []
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting step report data: {e}")
+            return {
+                'task': None,
+                'steps': [],
+                'screenshots': []
+            }
+
+    def cleanup_old_steps(self, days: int = 30) -> int:
+        """清理旧步骤数据"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=days)
+
+            # Delete old steps
+            steps_result = self.supabase.table('task_steps')\
+                .delete()\
+                .lt('created_at', cutoff_date.isoformat())\
+                .execute()
+
+            # Delete old screenshots
+            screenshots_result = self.supabase.table('step_screenshots')\
+                .delete()\
+                .lt('created_at', cutoff_date.isoformat())\
+                .execute()
+
+            deleted_steps = len(steps_result.data) if steps_result.data else 0
+            deleted_screenshots = len(screenshots_result.data) if screenshots_result.data else 0
+
+            logger.info(f"Cleaned up {deleted_steps} steps and {deleted_screenshots} screenshots")
+            return deleted_steps + deleted_screenshots
+
+        except Exception as e:
+            logger.error(f"Error cleaning up old steps: {e}")
+            return 0
+
+  # Screenshot URL update methods
+    def update_step_screenshot_url(self, step_id: str, local_path: str, remote_url: str) -> bool:
+        """Update screenshot URLs for a step"""
+        try:
+            # Update task_steps table
+            result1 = self.supabase.table('task_steps')\
+                .update({'screenshot_url': remote_url})\
+                .eq('step_id', step_id)\
+                .execute()
+
+            # Update step_screenshots table
+            result2 = self.supabase.table('step_screenshots')\
+                .update({'remote_url': remote_url})\
+                .eq('screenshot_path', local_path)\
+                .execute()
+
+            if result1.data and result2.data:
+                logger.info(f"Updated screenshot URLs for step: {step_id}")
+                return True
+            else:
+                logger.error(f"Failed to update screenshot URLs for step: {step_id}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error updating screenshot URLs: {e}")
+            return False
+
+    def get_screenshot_with_fallback(self, task_id: str, step_id: str) -> Optional[Dict]:
+        """Get screenshot with remote URL fallback to local path"""
+        try:
+            # First try to get from step_screenshots with remote_url
+            result = self.supabase.table('step_screenshots')\
+                .select('*')\
+                .eq('task_id', task_id)\
+                .eq('step_id', step_id)\
+                .not_.is_('remote_url', 'null')\
+                .execute()
+
+            if result.data and len(result.data) > 0:
+                return result.data[0]
+
+            # Fallback to task_steps
+            result = self.supabase.table('task_steps')\
+                .select('screenshot_path', 'screenshot_url')\
+                .eq('task_id', task_id)\
+                .eq('step_id', step_id)\
+                .not_.is_('screenshot_url', 'null')\
+                .execute()
+
+            if result.data and len(result.data) > 0:
+                return {
+                    'remote_url': result.data[0].get('screenshot_url'),
+                    'screenshot_path': result.data[0].get('screenshot_path'),
+                    'local_path': result.data[0].get('screenshot_path')
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting screenshot with fallback: {e}")
+            return None
+
 # 导出主要类
 __all__ = ['SupabaseTaskManager', 'GlobalTask']
 
