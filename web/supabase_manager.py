@@ -530,21 +530,22 @@ class SupabaseTaskManager:
             return 0
 
 # Step data management methods
-    def save_step(self, step_data: Dict) -> bool:
+    def save_step(self, step_data: Dict) -> Optional[str]:
         """保存单个步骤数据"""
         try:
             result = self.supabase.table('task_steps').insert(step_data).execute()
 
             if result.data:
-                logger.debug(f"Step saved: {step_data.get('step_id')}")
-                return True
+                step_id = result.data[0].get('id')
+                logger.debug(f"Step saved with ID: {step_id}")
+                return step_id
             else:
-                logger.error(f"Failed to save step: {step_data.get('step_id')}")
-                return False
+                logger.error(f"Failed to save step: {step_data.get('task_id')}")
+                return None
 
         except Exception as e:
             logger.error(f"Error saving step: {e}")
-            return False
+            return None
 
     def save_steps_batch(self, steps_data: List[Dict]) -> bool:
         """批量保存步骤数据"""
