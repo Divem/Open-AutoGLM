@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 渲染测试</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="web/static/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h2>Markdown 渲染测试</h2>
+
+        <div class="row">
+            <div class="col-md-6">
+                <h3>测试输入</h3>
+                <textarea id="test-input" class="form-control" rows="15">
+# 标题测试
+
+## 二级标题
+
+### 三级标题
+
+**粗体文本** 和 *斜体文本*
+
+`行内代码`
+
+```javascript
+// 代码块测试
+function hello() {
+    console.log("Hello, World!");
+}
+```
+
+- 无序列表项 1
+- 无序列表项 2
+  - 嵌套项目
+  - 另一个嵌套项目
+
+1. 有序列表项 1
+2. 有序列表项 2
+
+> 这是一个引用块
+> 可以有多行
+
+[这是一个链接](https://example.com)
+
+---
+
+| 表头1 | 表头2 | 表头3 |
+|-------|-------|-------|
+| 单元格1 | 单元格2 | 单元格3 |
+| 单元格4 | 单元格5 | 单元格6 |
+
+普通文本，**包含粗体**和`行内代码`以及[链接](http://example.com)。
+                </textarea>
+                <button class="btn btn-primary mt-2" onclick="testMarkdown()">测试渲染</button>
+            </div>
+
+            <div class="col-md-6">
+                <h3>渲染输出</h3>
+                <div id="test-output" class="border p-3 bg-light" style="min-height: 400px;">
+                    <div class="text-muted">点击"测试渲染"查看效果</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        // 模拟 PhoneAgentWeb 的消息格式化函数
+        class MarkdownTester {
+            formatMessage(content) {
+                // 首先检查是否包含 Markdown 语法
+                const hasMarkdown = this.hasMarkdownSyntax(content);
+
+                if (hasMarkdown) {
+                    // 使用 Marked.js 渲染 Markdown
+                    try {
+                        // 配置 Marked.js 选项
+                        marked.setOptions({
+                            breaks: true,  // 支持换行
+                            gfm: true,     // 支持GitHub风格的Markdown
+                            sanitize: false, // 允许HTML（已通过escapeHtml处理）
+                            smartLists: true,
+                            smartypants: true
+                        });
+
+                        // 渲染 Markdown
+                        content = marked.parse(content);
+                    } catch (error) {
+                        console.error('Markdown 渲染错误:', error);
+                        // 如果渲染失败，回退到原始格式化方法
+                        return this.formatBasicMessage(content);
+                    }
+                } else {
+                    // 如果没有 Markdown 语法，使用基础格式化
+                    return this.formatBasicMessage(content);
+                }
+
+                return content;
+            }
+
+            hasMarkdownSyntax(content) {
+                // 检查常见的 Markdown 语法模式
+                const markdownPatterns = [
+                    /^#{1,6}\s/m,           // 标题 # ## ###
+                    /^\*{1,2}(.+?)\*{1,2}/m, // 斜体 *text* 或粗体 **text**
+                    /^_{1,2}(.+?)_{1,2}/m,    // 斜体 _text_ 或粗体 __text__
+                    /^\[.+\]\(.+\)/m,        // 链接 [text](url)
+                    /^`{1,3}(.+?)`{1,3}/m,   // 代码 `code` 或 ```code```
+                    /^\d+\.\s/m,             // 有序列表 1. 2. 3.
+                    /^[-\*+]\s/m,            // 无序列表 - * +
+                    /^>\s/m,                 // 引用 >
+                    /^\|.*\|/m,              // 表格
+                    /^-{3,}/m,               // 分割线 ---
+                    /^\*{3,}/m               // 分割线 ***
+                ];
+
+                return markdownPatterns.some(pattern => pattern.test(content));
+            }
+
+            formatBasicMessage(content) {
+                // 基础格式化（原有的逻辑）
+                content = this.escapeHtml(content);
+
+                // Convert URLs to links
+                content = content.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>');
+
+                // 处理代码块
+                content = content.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, language, code) => {
+                    const lang = language || '';
+                    return `<div class="code-block mt-2 mb-2">
+                        <div class="code-header">
+                            <small class="text-muted">${lang || 'code'}</small>
+                        </div>
+                        <pre><code class="language-${lang}">${this.escapeHtml(code.trim())}</code></pre>
+                    </div>`;
+                });
+
+                // 处理行内代码
+                content = content.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+                // 处理粗体和斜体
+                content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                content = content.replace(/__(.+?)__/g, '<strong>$1</strong>');
+                content = content.replace(/_(.+?)_/g, '<em>$1</em>');
+
+                // 处理换行
+                content = content.replace(/\n/g, '<br>');
+
+                return content;
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        const tester = new MarkdownTester();
+
+        function testMarkdown() {
+            const input = document.getElementById('test-input').value;
+            const output = document.getElementById('test-output');
+
+            // 创建一个类似的消息结构
+            const formattedContent = `<div class="message-content">${tester.formatMessage(input)}</div>`;
+            output.innerHTML = formattedContent;
+        }
+
+        // 页面加载时自动测试
+        document.addEventListener('DOMContentLoaded', function() {
+            testMarkdown();
+        });
+    </script>
+</body>
+</html>

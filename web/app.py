@@ -15,36 +15,68 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
-from flask import Flask, render_template, request, jsonify, session, send_from_directory
+from flask import Flask, render_template, request, jsonify, session, send_from_directory, Response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import uuid
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Look for .env in parent directory
+    env_path = Path(__file__).parent.parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"✅ 已加载环境变量: {env_path}")
+    else:
+        print(f"⚠️  未找到.env文件: {env_path}")
+except ImportError:
+    print("⚠️  python-dotenv 未安装，无法自动加载.env文件")
+except Exception as e:
+    print(f"⚠️  加载环境变量时出错: {e}")
+
 from phone_agent import PhoneAgent
 from phone_agent.model import ModelConfig
 from phone_agent.agent import AgentConfig
 from phone_agent.recorder import ScriptRecorder
 
+# 导入脚本管理器
+try:
+    from supabase_manager import SupabaseTaskManager, GlobalTask
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    # 回退到本地GlobalTask定义
+    @dataclass
+    class GlobalTask:
+        task_id: str
+        session_id: str
+        user_id: str
+        task_description: str
+        status: str
+        created_at: datetime
+        last_activity: datetime
+        config: Dict
+        thread_id: Optional[str] = None
+        error_message: Optional[str] = None
+        end_time: Optional[datetime] = None
+        result: Optional[str] = None
+        script_id: Optional[str] = None  # 在数据库中存储为UUID，Python中使用字符串
 
-@dataclass
-class GlobalTask:
-    """Global task information that persists across page refreshes"""
-    task_id: str
-    session_id: str
-    user_id: str
-    task_description: str
-    status: str  # running, completed, error, stopped
-    created_at: datetime
-    last_activity: datetime
-    config: Dict
-    thread_id: Optional[str] = None
-    error_message: Optional[str] = None
+        @property
+        def global_task_id(self) -> str:
+            return self.task_id
+
+try:
+    from script_manager import ScriptManager
+    SCRIPT_MANAGER_AVAILABLE = True
+except ImportError:
+    SCRIPT_MANAGER_AVAILABLE = False
 
 
-class GlobalTaskManager:
-    """Global task manager that persists across page refreshes"""
+class PhoneAgentWeb:
 
     def __init__(self, storage_file: str = "web_tasks.pkl"):
         self.storage_file = Path(__file__).parent / storage_file
@@ -141,6 +173,7 @@ class GlobalTaskManager:
 
 
 # Global task manager instance - 使用Supabase
+global_task_manager = None
 try:
     from supabase_manager import SupabaseTaskManager
     global_task_manager = SupabaseTaskManager()
@@ -148,10 +181,10 @@ try:
 except Exception as e:
     print(f"❌ Supabase任务管理器初始化失败: {e}")
     print("回退到本地存储...")
+    global_task_manager = None
 
-    # 如果Supabase失败，使用本地存储
-    global_task_manager = GlobalTaskManager()
-    print("✅ 本地任务管理器初始化成功")
+# 创建本地Web任务管理器作为回退
+web_task_manager = PhoneAgentWeb()
 
 
 @dataclass
@@ -209,7 +242,7 @@ class PhoneAgentWeb:
                 'device_id': None,
                 'lang': 'cn',
                 'verbose': True,
-                'record_script': False,
+                'record_script': True,
                 'script_output_dir': 'web_scripts'
             }
         }
@@ -319,22 +352,29 @@ class PhoneAgentWeb:
         @self.app.route('/api/tasks', methods=['GET'])
         def get_tasks():
             """Get all tasks"""
-            session_id = request.args.get('session_id')
-            if session_id:
-                tasks = global_task_manager.get_tasks_by_session(session_id)
-            else:
-                tasks = global_task_manager.get_all_tasks()
+            try:
+                session_id = request.args.get('session_id')
+                if session_id:
+                    tasks = global_task_manager.get_tasks_by_session(session_id)
+                else:
+                    tasks = global_task_manager.get_all_tasks()
 
-            return jsonify([{
-                'task_id': task.task_id,
-                'session_id': task.session_id,
-                'user_id': task.user_id,
-                'task_description': task.task_description,
-                'status': task.status,
-                'created_at': task.created_at.isoformat(),
-                'last_activity': task.last_activity.isoformat(),
-                'error_message': task.error_message
-            } for task in tasks])
+                task_list = [{
+                    'task_id': task.task_id,
+                    'session_id': task.session_id,
+                    'user_id': task.user_id,
+                    'task_description': task.task_description,
+                    'status': task.status,
+                    'start_time': task.created_at.isoformat(),  # 映射为前端期望的字段名
+                    'end_time': task.end_time.isoformat() if task.end_time else None,
+                    'last_activity': task.last_activity.isoformat(),
+                    'error_message': task.error_message,
+                    'result': task.result
+                } for task in tasks]
+
+                return jsonify({'data': {'tasks': task_list}})
+            except Exception as e:
+                return jsonify({'error': f'Failed to fetch tasks: {str(e)}'}), 500
 
         @self.app.route('/api/tasks/<task_id>/stop', methods=['POST'])
         def stop_task(task_id):
@@ -348,21 +388,174 @@ class PhoneAgentWeb:
         @self.app.route('/api/tasks/<task_id>', methods=['GET'])
         def get_task(task_id):
             """Get task by ID"""
-            task = global_task_manager.get_task(task_id)
-            if task:
+            try:
+                task = global_task_manager.get_task(task_id)
+                if task:
+                    return jsonify({
+                        'data': {
+                            'task': {
+                                'task_id': task.task_id,
+                                'session_id': task.session_id,
+                                'user_id': task.user_id,
+                                'task_description': task.task_description,
+                                'status': task.status,
+                                'start_time': task.created_at.isoformat(),  # 映射为前端期望的字段名
+                                'end_time': task.end_time.isoformat() if task.end_time else None,
+                                'last_activity': task.last_activity.isoformat(),
+                                'error_message': task.error_message,
+                                'result': task.result,
+                                'config': task.config
+                            }
+                        }
+                    })
+                else:
+                    return jsonify({'error': 'Task not found'}), 404
+            except Exception as e:
+                return jsonify({'error': f'Failed to fetch task: {str(e)}'}), 500
+
+        # Script management APIs
+        @self.app.route('/api/scripts', methods=['GET'])
+        def get_scripts():
+            """Get scripts with optional search and filtering"""
+            try:
+                if not SCRIPT_MANAGER_AVAILABLE:
+                    return jsonify({'error': 'Script management not available'}), 503
+
+                # Initialize script manager
+                script_manager = ScriptManager()
+
+                # Get query parameters
+                keyword = request.args.get('keyword', '')
+                device_id = request.args.get('device_id', '')
+                model_name = request.args.get('model_name', '')
+                limit = int(request.args.get('limit', 50))
+                offset = int(request.args.get('offset', 0))
+
+                # Search scripts
+                scripts = script_manager.search_scripts(
+                    keyword=keyword,
+                    device_id=device_id,
+                    model_name=model_name,
+                    limit=limit,
+                    offset=offset
+                )
+
+                # Convert to response format
+                script_list = []
+                for script in scripts:
+                    script_list.append({
+                        'id': script.id,
+                        'task_name': script.task_name,
+                        'description': script.description,
+                        'total_steps': script.total_steps,
+                        'success_rate': script.success_rate,
+                        'execution_time': script.execution_time,
+                        'device_id': script.device_id,
+                        'model_name': script.model_name,
+                        'created_at': script.created_at.isoformat() if script.created_at else None
+                    })
+
+                return jsonify({'data': {'scripts': script_list}})
+            except Exception as e:
+                return jsonify({'error': f'Failed to fetch scripts: {str(e)}'}), 500
+
+        @self.app.route('/api/scripts/<script_id>', methods=['GET'])
+        def get_script(script_id):
+            """Get script details by ID"""
+            try:
+                script_manager = ScriptManager()
+                script = script_manager.get_script(script_id)
+
+                if script:
+                    return jsonify({'data': script.to_dict()})
+                else:
+                    return jsonify({'error': 'Script not found'}), 404
+            except Exception as e:
+                return jsonify({'error': f'Failed to fetch script: {str(e)}'}), 500
+
+        @self.app.route('/api/scripts/<script_id>/export', methods=['GET'])
+        def export_script(script_id):
+            """Export script in specified format"""
+            try:
+                script_manager = ScriptManager()
+                format_type = request.args.get('format', 'json').lower()
+
+                if format_type not in ['json', 'python']:
+                    return jsonify({'error': 'Invalid format. Supported formats: json, python'}), 400
+
+                script_content = script_manager.export_script(script_id, format_type)
+
+                if script_content is None:
+                    return jsonify({'error': 'Script not found'}), 404
+
+                if format_type == 'json':
+                    return Response(
+                        script_content,
+                        mimetype='application/json',
+                        headers={'Content-Disposition': f'attachment; filename=script_{script_id}.json'}
+                    )
+                else:  # python
+                    return Response(
+                        script_content,
+                        mimetype='text/x-python',
+                        headers={'Content-Disposition': f'attachment; filename=replay_script_{script_id}.py'}
+                    )
+            except Exception as e:
+                return jsonify({'error': f'Failed to export script: {str(e)}'}), 500
+
+        @self.app.route('/api/scripts/<script_id>/replay', methods=['POST'])
+        def replay_script(script_id):
+            """Initiate script replay"""
+            try:
+                script_manager = ScriptManager()
+                script = script_manager.get_script(script_id)
+
+                if not script:
+                    return jsonify({'error': 'Script not found'}), 404
+
+                # Get replay parameters
+                device_id = request.json.get('device_id')
+                delay = float(request.json.get('delay', 1.0))
+
+                # For now, return the script data for client-side replay
+                # In future, this could trigger server-side replay
                 return jsonify({
-                    'task_id': task.task_id,
-                    'session_id': task.session_id,
-                    'user_id': task.user_id,
-                    'task_description': task.task_description,
-                    'status': task.status,
-                    'created_at': task.created_at.isoformat(),
-                    'last_activity': task.last_activity.isoformat(),
-                    'error_message': task.error_message,
-                    'config': task.config
+                    'message': 'Script replay initiated',
+                    'script_id': script_id,
+                    'script_data': script.to_dict(),
+                    'replay_params': {
+                        'device_id': device_id,
+                        'delay': delay
+                    }
                 })
-            else:
-                return jsonify({'error': 'Task not found'}), 404
+            except Exception as e:
+                return jsonify({'error': f'Failed to initiate script replay: {str(e)}'}), 500
+
+        @self.app.route('/api/scripts/<script_id>', methods=['DELETE'])
+        def delete_script(script_id):
+            """Delete script (soft delete)"""
+            try:
+                script_manager = ScriptManager()
+                success = script_manager.delete_script(script_id, soft_delete=True)
+
+                if success:
+                    return jsonify({'message': 'Script deleted successfully'})
+                else:
+                    return jsonify({'error': 'Script not found'}), 404
+            except Exception as e:
+                return jsonify({'error': f'Failed to delete script: {str(e)}'}), 500
+
+        @self.app.route('/api/scripts/summary', methods=['GET'])
+        def get_script_summary():
+            """Get script summary statistics"""
+            try:
+                script_manager = ScriptManager()
+                limit = int(request.args.get('limit', 100))
+                summary = script_manager.get_script_summary(limit=limit)
+
+                return jsonify({'data': {'summary': summary}})
+            except Exception as e:
+                return jsonify({'error': f'Failed to fetch script summary: {str(e)}'}), 500
 
     def setup_socketio(self):
         """Setup SocketIO handlers"""
@@ -516,10 +709,25 @@ class PhoneAgentWeb:
             # Execute task
             result = agent.run(task_description, step_callback=step_callback)
 
+            # Save script to database if recording was enabled
+            script_id = None
+            if agent_config.get('record_script', False) and hasattr(agent, 'recorder') and agent.recorder:
+                try:
+                    # Finish recording and save to database
+                    agent.recorder.finish_recording(success=True)
+                    script_id = agent.recorder.save_to_database_and_file()
+
+                    # Update global task with script_id
+                    if script_id:
+                        global_task_manager.update_task(task_id, script_id=script_id)
+                        print(f"Task {task_id} script saved with ID: {script_id}")
+                except Exception as script_error:
+                    print(f"Failed to save script to database: {script_error}")
+
             # Update session and global task
             session_data.task_status = 'completed'
             session_data.last_activity = datetime.now()
-            global_task_manager.update_task_status(task_id, 'completed')
+            global_task_manager.update_task_status(task_id, 'completed', result=str(result))
 
             # Add result to conversation
             session_data.conversation_history.append({
@@ -533,10 +741,26 @@ class PhoneAgentWeb:
                 'session_id': session_id,
                 'result': str(result),
                 'task_id': task_id,
+                'script_id': script_id,  # Include script_id in response
                 'timestamp': datetime.now().isoformat()
             }, room=session_id)
 
         except Exception as e:
+            # Save script to database even if task failed (if recording was enabled)
+            script_id = None
+            try:
+                if 'agent_config' in locals() and agent_config.get('record_script', False) and 'agent' in locals() and hasattr(agent, 'recorder') and agent.recorder:
+                    # Finish recording with failure status
+                    agent.recorder.finish_recording(success=False)
+                    script_id = agent.recorder.save_to_database_and_file()
+
+                    # Update global task with script_id even for failed tasks
+                    if script_id:
+                        global_task_manager.update_task(task_id, script_id=script_id)
+                        print(f"Failed task {task_id} script saved with ID: {script_id}")
+            except Exception as script_error:
+                print(f"Failed to save script to database during error handling: {script_error}")
+
             # Handle error
             session_data.task_status = 'error'
             session_data.last_activity = datetime.now()
@@ -553,6 +777,7 @@ class PhoneAgentWeb:
                 'session_id': session_id,
                 'error': error_message,
                 'task_id': task_id,
+                'script_id': script_id,  # Include script_id even for errors
                 'timestamp': datetime.now().isoformat()
             }, room=session_id)
 

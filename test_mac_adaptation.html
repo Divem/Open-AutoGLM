@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mac Safe Area Adaptation Test</title>
+    <link href="web/static/css/style.css" rel="stylesheet">
+    <style>
+        /* 测试专用样式 */
+        .test-info {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 10000;
+        }
+
+        .safe-area-indicator {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: env(safe-area-inset-bottom, 0px);
+            background: rgba(255, 0, 0, 0.3);
+            z-index: 9999;
+            border-top: 2px solid red;
+        }
+
+        .safe-area-indicator::before {
+            content: "Safe Area: " env(safe-area-inset-bottom, "0px");
+            position: absolute;
+            top: -20px;
+            left: 10px;
+            color: red;
+            font-weight: bold;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-info" id="test-info">
+        <div>Platform: <span id="platform">检测中...</span></div>
+        <div>Browser: <span id="browser">检测中...</span></div>
+        <div>Safe Area Support: <span id="safe-area-support">检测中...</span></div>
+        <div>Safe Area Bottom: <span id="safe-area-bottom">检测中...</span></div>
+        <div>Available Height: <span id="available-height">检测中...</span></div>
+    </div>
+
+    <div class="main-container">
+        <div class="chat-area">
+            <div class="chat-header">
+                <div class="chat-title">Mac Adaptation Test</div>
+            </div>
+
+            <div class="chat-container">
+                <div class="welcome-message">
+                    <h3>Mac Safe Area Adaptation 测试</h3>
+                    <p>此页面用于测试Mac设备上的安全区域适配功能。</p>
+                    <p>如果底部红色指示器可见，说明safe-area-inset正在工作。</p>
+                    <p style="margin-top: 20px;"><strong>预期效果：</strong></p>
+                    <ul style="text-align: left; display: inline-block;">
+                        <li>在Mac设备上，输入区域应自动避开Dock栏</li>
+                        <li>红色指示器应显示Dock栏占用的空间</li>
+                        <li>输入框和按钮应完全可访问</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-group">
+                    <input type="text" class="form-control" placeholder="测试输入框 - 应该完全可见且可访问">
+                    <button class="btn btn-primary">发送测试</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="side-panel">
+            <div class="status-panel">
+                <h6>测试状态</h6>
+                <p>此面板应正常显示，不会被遮挡。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 安全区域指示器（仅用于测试） -->
+    <div class="safe-area-indicator"></div>
+
+    <script>
+        // 简化的Mac适配检测脚本
+        function detectMacPlatform() {
+            return /Mac|iPhone|iPad|iPod/.test(navigator.platform) ||
+                   /Mac/.test(navigator.userAgent);
+        }
+
+        function detectSafariBrowser() {
+            return /Safari/.test(navigator.userAgent) &&
+                   !/Chrome|Chromium|Edge|Firefox|Opera/.test(navigator.userAgent);
+        }
+
+        function detectSafeAreaSupport() {
+            const testElement = document.createElement('div');
+            testElement.style.paddingBottom = 'env(safe-area-inset-bottom)';
+            document.body.appendChild(testElement);
+            const supported = getComputedStyle(testElement).paddingBottom !== 'env(safe-area-inset-bottom)';
+            document.body.removeChild(testElement);
+            return supported;
+        }
+
+        function getSafeAreaBottom() {
+            if (!detectSafeAreaSupport()) return 0;
+
+            const temp = document.createElement('div');
+            temp.style.position = 'fixed';
+            temp.style.bottom = '0';
+            temp.style.paddingBottom = 'env(safe-area-inset-bottom)';
+            temp.style.visibility = 'hidden';
+            document.body.appendChild(temp);
+            const computedStyle = getComputedStyle(temp);
+            const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0;
+            document.body.removeChild(temp);
+            return paddingBottom;
+        }
+
+        // 更新测试信息
+        document.getElementById('platform').textContent = detectMacPlatform() ? 'Mac/iOS' : 'Other';
+        document.getElementById('browser').textContent = detectSafariBrowser() ? 'Safari' : 'Other';
+        document.getElementById('safe-area-support').textContent = detectSafeAreaSupport() ? 'Yes' : 'No';
+        document.getElementById('safe-area-bottom').textContent = getSafeAreaBottom() + 'px';
+        document.getElementById('available-height').textContent = window.innerHeight + 'px';
+
+        // 监听窗口变化
+        window.addEventListener('resize', () => {
+            document.getElementById('safe-area-bottom').textContent = getSafeAreaBottom() + 'px';
+            document.getElementById('available-height').textContent = window.innerHeight + 'px';
+        });
+
+        console.log('Mac Adaptation Test - 检测结果:');
+        console.log('Platform:', detectMacPlatform());
+        console.log('Browser:', detectSafariBrowser());
+        console.log('Safe Area Support:', detectSafeAreaSupport());
+        console.log('Safe Area Bottom:', getSafeAreaBottom() + 'px');
+    </script>
+</body>
+</html>

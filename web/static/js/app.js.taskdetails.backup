@@ -1,0 +1,2205 @@
+// Phone Agent Web Interface - Main Application JavaScript
+
+class PhoneAgentWeb {
+    constructor() {
+        this.socket = null;
+        this.sessionId = null;
+        this.isConnected = false;
+        this.taskStartTime = null;
+        this.updateTimer = null;
+        this.stepCount = 0;
+
+        // 消息队列管理
+        this.messageQueue = [];
+        this.isProcessingQueue = false;
+        this.batchProcessTimer = null;
+
+        // 任务详情面板
+        this.taskDetailsPanel = {
+            isVisible: false,
+            currentTask: null,
+            steps: [],
+            taskResult: null
+        };
+
+        this.init();
+    }
+
+    init() {
+        // Initialize Mac platform detection and layout adaptation
+        this.initMacAdaptation();
+
+        // Initialize Socket.IO connection
+        this.socket = io();
+        this.setupSocketListeners();
+
+        // Setup UI event listeners
+        this.setupUIListeners();
+
+        // Initialize smart scroller
+        this.initSmartScroller();
+
+        // Initialize floating screenshot
+        this.initFloatingScreenshot();
+
+        // Initialize task details panel
+        this.initTaskDetailsPanel();
+
+        // Initialize session
+        this.createSession();
+
+        // Load initial data
+        this.loadDevices();
+        this.loadApps();
+        this.loadTaskHistory();
+    }
+
+    setupSocketListeners() {
+        this.socket.on('connect', () => {
+            console.log('Connected to server');
+            this.isConnected = true;
+            this.updateConnectionStatus(true);
+        });
+
+        this.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            this.isConnected = false;
+            this.updateConnectionStatus(false);
+        });
+
+        this.socket.on('joined_session', (data) => {
+            console.log('Joined session:', data.session_id);
+        });
+
+        this.socket.on('task_started', (data) => {
+            this.onTaskStarted(data);
+        });
+
+        this.socket.on('step_update', (data) => {
+            this.onStepUpdate(data);
+        });
+
+        this.socket.on('task_completed', (data) => {
+            this.onTaskCompleted(data);
+        });
+
+        this.socket.on('task_error', (data) => {
+            this.onTaskError(data);
+        });
+
+        this.socket.on('task_stopped', (data) => {
+            this.onTaskStopped(data);
+        });
+    }
+
+    // Mac Platform Adaptation Methods
+    initMacAdaptation() {
+        this.isMacPlatform = this.detectMacPlatform();
+        this.isSafariBrowser = this.detectSafariBrowser();
+        this.supportsSafeArea = this.detectSafeAreaSupport();
+
+        if (this.isMacPlatform) {
+            console.log('Mac platform detected, applying adaptations');
+            this.applyMacLayoutAdaptations();
+            this.setupMacEventListeners();
+        }
+    }
+
+    detectMacPlatform() {
+        // 检测是否为Mac平台
+        return /Mac|iPhone|iPad|iPod/.test(navigator.platform) ||
+               /Mac/.test(navigator.userAgent);
+    }
+
+    detectSafariBrowser() {
+        // 检测Safari浏览器
+        return /Safari/.test(navigator.userAgent) &&
+               !/Chrome|Chromium|Edge|Firefox|Opera/.test(navigator.userAgent);
+    }
+
+    detectSafeAreaSupport() {
+        // 检测浏览器是否支持CSS safe-area-inset
+        const testElement = document.createElement('div');
+        testElement.style.paddingBottom = 'env(safe-area-inset-bottom)';
+        document.body.appendChild(testElement);
+        const supported = getComputedStyle(testElement).paddingBottom !== 'env(safe-area-inset-bottom)';
+        document.body.removeChild(testElement);
+        return supported;
+    }
+
+    applyMacLayoutAdaptations() {
+        // 为Mac平台应用特定的布局适配
+        if (this.isSafariBrowser && !this.supportsSafeArea) {
+            // Safari不支持safe-area时的回退方案
+            this.applySafariFallback();
+        }
+
+        // 动态计算可用空间
+        this.calculateAvailableSpace();
+
+        // 添加Mac标识到body类
+        document.body.classList.add('mac-platform');
+
+        if (this.isSafariBrowser) {
+            document.body.classList.add('safari-browser');
+        }
+
+        if (this.supportsSafeArea) {
+            document.body.classList.add('safe-area-supported');
+        }
+    }
+
+    applySafariFallback() {
+        // Safari不支持safe-area时的回退适配
+        // 添加额外的底部边距
+        const inputArea = document.querySelector('.input-area');
+        const scrollBtn = document.querySelector('.scroll-btn');
+
+        if (inputArea) {
+            inputArea.style.marginBottom = '20px'; // Safari回退边距
+        }
+
+        if (scrollBtn) {
+            scrollBtn.style.bottom = '140px'; // 调整滚动按钮位置
+        }
+    }
+
+    calculateAvailableSpace() {
+        // 计算可用的屏幕空间
+        const visualViewport = window.visualViewport;
+        let availableHeight = window.innerHeight;
+
+        if (visualViewport) {
+            availableHeight = visualViewport.height;
+        }
+
+        // 存储计算的值供其他方法使用
+        this.availableHeight = availableHeight;
+        this.safeAreaBottom = this.getSafeAreaBottom();
+
+        console.log(`Available height: ${availableHeight}px, Safe area bottom: ${this.safeAreaBottom}px`);
+    }
+
+    getSafeAreaBottom() {
+        // 获取底部安全区域大小
+        if (!this.supportsSafeArea) {
+            return 0;
+        }
+
+        // 创建临时元素来测量safe-area-inset-bottom
+        const temp = document.createElement('div');
+        temp.style.position = 'fixed';
+        temp.style.bottom = '0';
+        temp.style.left = '0';
+        temp.style.width = '1px';
+        temp.style.height = '0';
+        temp.style.paddingBottom = 'env(safe-area-inset-bottom)';
+        temp.style.visibility = 'hidden';
+        temp.style.pointerEvents = 'none';
+
+        document.body.appendChild(temp);
+        const computedStyle = getComputedStyle(temp);
+        const paddingBottom = parseFloat(computedStyle.paddingBottom) || 0;
+        document.body.removeChild(temp);
+
+        return paddingBottom;
+    }
+
+    setupMacEventListeners() {
+        // 设置Mac特定的事件监听器
+        if (window.visualViewport) {
+            // 监听视觉视口变化（用于处理缩放、虚拟键盘等）
+            window.visualViewport.addEventListener('resize', () => {
+                this.handleViewportChange();
+            });
+        }
+
+        // 监听窗口大小变化
+        window.addEventListener('resize', () => {
+            this.handleWindowResize();
+        }, { passive: true });
+
+        // 监听系统主题变化（macOS Dark Mode）
+        if (window.matchMedia) {
+            const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+            darkModeQuery.addListener(() => {
+                this.handleThemeChange();
+            });
+        }
+    }
+
+    handleViewportChange() {
+        // 处理视觉视口变化
+        this.calculateAvailableSpace();
+        this.updateLayoutForViewport();
+    }
+
+    handleWindowResize() {
+        // 处理窗口大小变化
+        this.calculateAvailableSpace();
+        this.updateLayoutForViewport();
+    }
+
+    handleThemeChange() {
+        // 处理系统主题变化
+        console.log('System theme changed');
+        // 可以在这里添加主题相关的适配逻辑
+    }
+
+    updateLayoutForViewport() {
+        // 根据视口变化更新布局
+        const inputArea = document.querySelector('.input-area');
+        const mainContainer = document.querySelector('.main-container');
+
+        if (this.availableHeight && this.safeAreaBottom > 0) {
+            console.log(`Updating layout for safe area: ${this.safeAreaBottom}px`);
+
+            // 动态调整布局
+            if (mainContainer && !this.supportsSafeArea) {
+                // 如果CSS不支持safe-area，使用JavaScript回退
+                mainContainer.style.height = `calc(100vh - ${this.safeAreaBottom}px)`;
+            }
+        }
+    }
+
+    setupUIListeners() {
+        const sendBtn = document.getElementById('send-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const taskInput = document.getElementById('task-input');
+        const screenshotToggleBtn = document.getElementById('screenshot-toggle-btn');
+        const taskDetailsToggleBtn = document.getElementById('show-task-details-btn');
+
+        // Send button
+        sendBtn.addEventListener('click', () => {
+            this.sendTask();
+        });
+
+        // Stop button
+        stopBtn.addEventListener('click', () => {
+            this.stopTask();
+        });
+
+        // Enter key in input
+        taskInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendTask();
+            }
+        });
+
+        // Screenshot toggle button
+        if (screenshotToggleBtn) {
+            screenshotToggleBtn.addEventListener('click', () => {
+                if (this.floatingScreenshot) {
+                    this.floatingScreenshot.toggleVisibility();
+                }
+            });
+        }
+
+        // Task details toggle button
+        if (taskDetailsToggleBtn) {
+            taskDetailsToggleBtn.addEventListener('click', () => {
+                this.toggleTaskDetailsPanel();
+            });
+        }
+
+        // Task details panel close button
+        const toggleTaskDetailsBtn = document.getElementById('toggle-task-details');
+        if (toggleTaskDetailsBtn) {
+            toggleTaskDetailsBtn.addEventListener('click', () => {
+                this.hideTaskDetailsPanel();
+            });
+        }
+
+        // Periodic updates
+        this.updateTimer = setInterval(() => {
+            this.updateExecutionTime();
+        }, 1000);
+
+        // Global keyboard shortcut for screenshot toggle (Ctrl+S)
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 's' && !e.shiftKey) {
+                e.preventDefault();
+                if (this.floatingScreenshot) {
+                    this.floatingScreenshot.toggleVisibility();
+                }
+            }
+        });
+    }
+
+    initSmartScroller() {
+        const chatContainer = document.getElementById('chat-messages');
+        if (chatContainer) {
+            try {
+                // 如果已存在,先清理旧实例
+                if (this.smartScroller) {
+                    this.smartScroller.destroy();
+                }
+                this.smartScroller = new SmartScroller(chatContainer);
+                console.log('Smart scroller initialized');
+            } catch (error) {
+                console.error('Failed to initialize smart scroller:', error);
+                this.smartScroller = null;
+            }
+        } else {
+            console.warn('Chat container not found, smart scroller disabled');
+        }
+    }
+
+    async createSession() {
+        try {
+            const response = await fetch('/api/sessions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: 'web_user_' + Date.now()
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.sessionId = data.session_id;
+                document.getElementById('session-id').textContent = `会话ID: ${this.sessionId.substring(0, 8)}...`;
+
+                // Join session room
+                this.socket.emit('join_session', { session_id: this.sessionId });
+
+                // Enable input
+                document.getElementById('task-input').disabled = false;
+                document.getElementById('send-btn').disabled = false;
+
+                this.showToast('会话已创建', 'success');
+            } else {
+                throw new Error('Failed to create session');
+            }
+        } catch (error) {
+            console.error('Error creating session:', error);
+            this.showToast('创建会话失败: ' + error.message, 'error');
+        }
+    }
+
+    async sendTask() {
+        const taskInput = document.getElementById('task-input');
+        const task = taskInput.value.trim();
+
+        if (!task || !this.isConnected) {
+            return;
+        }
+
+        // Get current configuration
+        const config = await this.getCurrentConfig();
+
+        // Add user message to chat
+        this.addMessage('user', task);
+
+        // Clear input and disable controls
+        taskInput.value = '';
+        this.setInputEnabled(false);
+
+        // Reset task tracking
+        this.stepCount = 0;
+        this.taskStartTime = new Date();
+        this.updateTaskStatus('running', task);
+
+        // Reset smart scroller for new task
+        if (this.smartScroller) {
+            this.smartScroller.reset();
+        }
+
+        // Send task to server
+        this.socket.emit('send_task', {
+            session_id: this.sessionId,
+            task: task,
+            config: config
+        });
+    }
+
+    stopTask() {
+        if (this.sessionId) {
+            this.socket.emit('stop_task', {
+                session_id: this.sessionId
+            });
+        }
+    }
+
+    onTaskStarted(data) {
+        this.addMessage('system', `开始执行任务: ${data.task}`);
+        this.updateTaskStatus('running', data.task);
+        this.showToast('任务开始执行', 'info');
+    }
+
+    onStepUpdate(data) {
+        this.stepCount++;
+        const step = data.step;
+
+        // Create step message
+        let stepMessage = '';
+
+        if (step.thinking) {
+            stepMessage += `<div class="step-thinking">
+                <i class="fas fa-brain me-1"></i>
+                <strong>思考:</strong> ${this.escapeHtml(step.thinking)}
+            </div>`;
+        }
+
+        if (step.action) {
+            stepMessage += `<div class="step-action">
+                <i class="fas fa-play-circle me-1"></i>
+                <strong>动作:</strong> <code>${JSON.stringify(step.action)}</code>
+            </div>`;
+        }
+
+        if (step.result) {
+            stepMessage += `<div class="step-result">
+                <i class="fas fa-check-circle me-1"></i>
+                <strong>结果:</strong> ${this.escapeHtml(String(step.result))}
+            </div>`;
+        }
+
+        // Add step update to chat
+        this.addStepUpdate(`步骤 ${this.stepCount}`, stepMessage);
+
+        // Update step count
+        document.getElementById('step-count').textContent = this.stepCount;
+
+        // Update screenshot if available
+        if (step.screenshot) {
+            this.updateScreenshot(step.screenshot);
+        }
+    }
+
+    onTaskCompleted(data) {
+        this.addMessage('assistant', data.result);
+        this.updateTaskStatus('completed');
+        this.setInputEnabled(true);
+        this.showToast('任务执行完成', 'success');
+    }
+
+    onTaskError(data) {
+        this.addMessage('system', `任务执行出错: ${data.error}`);
+        this.updateTaskStatus('error');
+        this.setInputEnabled(true);
+        this.showToast('任务执行失败: ' + data.error, 'error');
+    }
+
+    onTaskStopped(data) {
+        this.addMessage('system', data.message);
+        this.updateTaskStatus('stopped');
+        this.setInputEnabled(true);
+        this.showToast('任务已停止', 'warning');
+    }
+
+    addMessage(role, content, timestamp = null) {
+        const chatContainer = document.getElementById('chat-messages');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${role}`;
+
+        const time = timestamp || new Date().toLocaleTimeString();
+        const roleIcon = this.getRoleIcon(role);
+        const roleClass = role === 'user' ? '用户' : role === 'assistant' ? '助手' : '系统';
+
+        // 检测是否为长消息
+        const formattedContent = this.formatMessage(content);
+        const isLongMessage = this.isLongMessage(content);
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        if (isLongMessage) {
+            // 长消息:创建可折叠版本
+            const previewContent = this.getPreviewContent(content);
+            messageDiv.innerHTML = `
+                <div class="message-content long-message" id="${messageId}">
+                    <div class="message-header mb-1">
+                        <small><i class="${roleIcon} me-1"></i>${roleClass}</small>
+                    </div>
+                    <div class="message-text preview">${this.formatMessage(previewContent)}</div>
+                    <div class="message-text full" style="display: none;">${formattedContent}</div>
+                    <button class="btn btn-sm btn-link expand-btn" onclick="phoneAgentWeb.toggleMessageExpansion('${messageId}')">
+                        <i class="fas fa-chevron-down"></i> 展开全部
+                    </button>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+        } else {
+            // 普通消息
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <div class="message-header mb-1">
+                        <small><i class="${roleIcon} me-1"></i>${roleClass}</small>
+                    </div>
+                    <div class="message-text">${formattedContent}</div>
+                    <div class="message-time">${time}</div>
+                </div>
+            `;
+        }
+
+        // Remove welcome message if exists
+        const welcomeMsg = chatContainer.querySelector('.welcome-message');
+        if (welcomeMsg) {
+            welcomeMsg.remove();
+        }
+
+        chatContainer.appendChild(messageDiv);
+
+        // 使用批量更新机制
+        this.scheduleScrollUpdate();
+    }
+
+    // 检测是否为长消息
+    isLongMessage(content) {
+        // 判断标准:
+        // 1. 文本长度超过1000个字符
+        // 2. 或包含超过15行
+        const charThreshold = 1000;
+        const lineThreshold = 15;
+
+        const charCount = content.length;
+        const lineCount = content.split('\n').length;
+
+        return charCount > charThreshold || lineCount > lineThreshold;
+    }
+
+    // 获取预览内容
+    getPreviewContent(content) {
+        const previewLines = 10;
+        const previewChars = 500;
+
+        const lines = content.split('\n');
+
+        if (lines.length <= previewLines && content.length <= previewChars) {
+            return content;
+        }
+
+        // 截取前N行或前N个字符
+        let preview = lines.slice(0, previewLines).join('\n');
+        if (preview.length > previewChars) {
+            preview = preview.substring(0, previewChars);
+        }
+
+        return preview + '\n\n...';
+    }
+
+    // 切换消息展开/收起状态
+    toggleMessageExpansion(messageId) {
+        const messageContent = document.getElementById(messageId);
+        if (!messageContent) return;
+
+        const previewDiv = messageContent.querySelector('.message-text.preview');
+        const fullDiv = messageContent.querySelector('.message-text.full');
+        const expandBtn = messageContent.querySelector('.expand-btn');
+
+        if (!previewDiv || !fullDiv || !expandBtn) return;
+
+        const isExpanded = fullDiv.style.display !== 'none';
+
+        if (isExpanded) {
+            // 收起
+            fullDiv.style.display = 'none';
+            previewDiv.style.display = 'block';
+            expandBtn.innerHTML = '<i class="fas fa-chevron-down"></i> 展开全部';
+        } else {
+            // 展开
+            previewDiv.style.display = 'none';
+            fullDiv.style.display = 'block';
+            expandBtn.innerHTML = '<i class="fas fa-chevron-up"></i> 收起';
+
+            // 展开后滚动到消息位置
+            if (this.smartScroller) {
+                setTimeout(() => {
+                    messageContent.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 100);
+            }
+        }
+    }
+
+    addStepUpdate(title, content) {
+        const chatContainer = document.getElementById('chat-messages');
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'step-update';
+
+        stepDiv.innerHTML = `
+            <div class="step-header">
+                <i class="fas fa-cogs me-1"></i>
+                <strong>${title}</strong>
+                <small class="text-muted ms-2">${new Date().toLocaleTimeString()}</small>
+            </div>
+            ${content}
+        `;
+
+        chatContainer.appendChild(stepDiv);
+
+        // 使用批量更新机制
+        this.scheduleScrollUpdate();
+    }
+
+    // 调度滚动更新 - 批量处理多个消息
+    scheduleScrollUpdate() {
+        // 清除之前的定时器
+        if (this.batchProcessTimer) {
+            clearTimeout(this.batchProcessTimer);
+        }
+
+        // 设置新的定时器,批量处理
+        this.batchProcessTimer = setTimeout(() => {
+            this.processBatchScroll();
+        }, 50); // 50ms内的消息会被批量处理
+    }
+
+    // 批量处理滚动
+    processBatchScroll() {
+        if (this.smartScroller) {
+            // 使用requestAnimationFrame确保在下一帧渲染
+            requestAnimationFrame(() => {
+                this.smartScroller.onBatchMessageAdded();
+            });
+        } else {
+            // 降级到简单滚动
+            const chatContainer = document.getElementById('chat-messages');
+            if (chatContainer) {
+                requestAnimationFrame(() => {
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                });
+            }
+        }
+    }
+
+    updateTaskStatus(status, task = null) {
+        const statusElement = document.getElementById('task-status');
+        const taskElement = document.getElementById('current-task');
+        const progressBar = document.getElementById('task-progress');
+
+        // Update status badge
+        statusElement.className = 'badge status-badge ' + status;
+        statusElement.textContent = this.getStatusText(status);
+
+        // Update current task
+        if (task) {
+            taskElement.textContent = task.length > 30 ? task.substring(0, 30) + '...' : task;
+            taskElement.title = task;
+        }
+
+        // Update progress bar
+        if (status === 'running') {
+            progressBar.style.width = '50%';
+            progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+        } else if (status === 'completed') {
+            progressBar.style.width = '100%';
+            progressBar.className = 'progress-bar bg-success';
+        } else if (status === 'error') {
+            progressBar.style.width = '100%';
+            progressBar.className = 'progress-bar bg-danger';
+        } else {
+            progressBar.style.width = '0%';
+            progressBar.className = 'progress-bar';
+        }
+    }
+
+    updateConnectionStatus(connected) {
+        const statusElement = document.getElementById('connection-status');
+
+        if (connected) {
+            statusElement.className = 'badge bg-success';
+            statusElement.innerHTML = '<i class="fas fa-circle me-1"></i>已连接';
+        } else {
+            statusElement.className = 'badge bg-danger';
+            statusElement.innerHTML = '<i class="fas fa-circle me-1"></i>已断开';
+        }
+    }
+
+    updateExecutionTime() {
+        if (this.taskStartTime && this.isConnected) {
+            const elapsed = Math.floor((new Date() - this.taskStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            const timeString = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+            document.getElementById('execution-time').textContent = timeString;
+        }
+    }
+
+    updateScreenshot(screenshotData) {
+        // Update only the floating container
+        const floatingContainer = document.getElementById('floating-screenshot-container');
+
+        if (screenshotData) {
+            let imageSrc;
+
+            // Check if it's a base64 data URL or a file path
+            if (screenshotData.startsWith('data:image/')) {
+                imageSrc = screenshotData;
+            } else if (screenshotData.length > 100 && screenshotData.includes('/')) {
+                // Likely a base64 string without data URL prefix
+                imageSrc = `data:image/png;base64,${screenshotData}`;
+            } else {
+                // Treat as file path
+                imageSrc = `/screenshots/${screenshotData}`;
+            }
+
+            const screenshotHtml = `
+                <div class="screenshot-preview">
+                    <img src="${imageSrc}"
+                         alt="操作截图"
+                         class="img-fluid"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+                         onclick="this.requestFullscreen()">
+                    <div class="zoom-hint">
+                        <i class="fas fa-search-plus"></i> 点击全屏
+                    </div>
+                    <div class="text-center text-muted" style="display: none;">
+                        <i class="fas fa-exclamation-triangle"></i> 截图加载失败
+                    </div>
+                </div>
+            `;
+
+            // Update only floating container
+            if (floatingContainer) {
+                floatingContainer.innerHTML = screenshotHtml;
+            }
+        } else {
+            const emptyScreenshotHtml = `
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-image fa-2x mb-2"></i>
+                    <p class="small">暂无截图</p>
+                </div>
+            `;
+
+            // Update only floating container
+            if (floatingContainer) {
+                floatingContainer.innerHTML = `
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-image fa-2x mb-2"></i>
+                        <p class="small mb-0">等待截图...</p>
+                    </div>
+                `;
+            }
+        }
+    }
+
+    setInputEnabled(enabled) {
+        document.getElementById('task-input').disabled = !enabled;
+        document.getElementById('send-btn').disabled = !enabled;
+        document.getElementById('stop-btn').disabled = enabled;
+
+        if (enabled) {
+            document.getElementById('task-input').focus();
+        }
+    }
+
+    async loadDevices() {
+        try {
+            const response = await fetch('/api/devices');
+            if (response.ok) {
+                const devices = await response.json();
+                this.updateDeviceList(devices);
+            }
+        } catch (error) {
+            console.error('Error loading devices:', error);
+            this.updateDeviceList([]);
+        }
+    }
+
+    async loadApps() {
+        try {
+            const response = await fetch('/api/apps');
+            if (response.ok) {
+                const apps = await response.json();
+                this.updateAppsList(apps);
+            }
+        } catch (error) {
+            console.error('Error loading apps:', error);
+            this.updateAppsList([]);
+        }
+    }
+
+    async loadTaskHistory() {
+        try {
+            // 显示加载状态
+            this.showTaskHistoryLoading(true);
+
+            const response = await fetch('/api/tasks');
+            if (response.ok) {
+                const data = await response.json();
+                // 适配新的API响应格式
+                this.updateTaskHistoryList(data.data?.tasks || []);
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '加载任务历史失败', 'error');
+                this.updateTaskHistoryList([]);
+            }
+        } catch (error) {
+            console.error('Error loading task history:', error);
+            this.showToast('加载任务历史失败，请检查网络连接', 'error');
+            this.updateTaskHistoryList([]);
+        } finally {
+            this.showTaskHistoryLoading(false);
+        }
+    }
+
+    async stopHistoryTask(taskId) {
+        try {
+            const response = await fetch(`/api/tasks/${taskId}/stop`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast(data.message, 'success');
+                // 刷新任务历史
+                await this.loadTaskHistory();
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '停止任务失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error stopping history task:', error);
+            this.showToast('停止任务失败', 'error');
+        }
+    }
+
+    async viewTaskDetails(taskId) {
+        try {
+            const response = await fetch(`/api/tasks/${taskId}`);
+            if (response.ok) {
+                const data = await response.json();
+                // 适配新的API响应格式，取出实际的任务数据
+                const task = data.data?.task;
+                if (task) {
+                    this.showTaskDetails(task);
+                } else {
+                    this.showToast('任务详情数据格式错误', 'error');
+                }
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '获取任务详情失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error viewing task details:', error);
+            this.showToast('获取任务详情失败', 'error');
+        }
+    }
+
+    async viewScript(scriptId) {
+        try {
+            this.showToast('正在加载脚本详情...', 'info');
+            const response = await fetch(`/api/scripts/${scriptId}`);
+
+            if (response.ok) {
+                const data = await response.json();
+                const script = data.data?.script || data.data;
+
+                if (script) {
+                    this.showScriptDetails(script);
+                } else {
+                    this.showToast('脚本详情数据格式错误', 'error');
+                }
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '获取脚本详情失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error viewing script details:', error);
+            this.showToast('获取脚本详情失败', 'error');
+        }
+    }
+
+    showScriptDetails(script) {
+        // 创建脚本详情模态框
+        const modalHtml = `
+            <div class="modal fade" id="scriptDetailsModal" tabindex="-1">
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="fas fa-code me-2"></i>脚本详情
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h6><i class="fas fa-info-circle me-2"></i>基本信息</h6>
+                                    <table class="table table-sm">
+                                        <tr><td><strong>任务名称:</strong></td><td>${script.task_name || 'N/A'}</td></tr>
+                                        <tr><td><strong>描述:</strong></td><td>${script.description || 'N/A'}</td></tr>
+                                        <tr><td><strong>总步骤数:</strong></td><td>${script.total_steps || 0}</td></tr>
+                                        <tr><td><strong>成功率:</strong></td><td>${script.success_rate || 0}%</td></tr>
+                                        <tr><td><strong>执行时间:</strong></td><td>${script.execution_time || 0}秒</td></tr>
+                                        <tr><td><strong>设备ID:</strong></td><td>${script.device_id || 'N/A'}</td></tr>
+                                        <tr><td><strong>模型:</strong></td><td>${script.model_name || 'N/A'}</td></tr>
+                                        <tr><td><strong>创建时间:</strong></td><td>${script.created_at ? new Date(script.created_at).toLocaleString() : 'N/A'}</td></tr>
+                                    </table>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6><i class="fas fa-tools me-2"></i>操作</h6>
+                                    <div class="d-grid gap-2">
+                                        <button class="btn btn-outline-primary btn-sm" onclick="phoneAgentWeb.exportScript('${script.id}', 'json')">
+                                            <i class="fas fa-download me-1"></i>导出JSON
+                                        </button>
+                                        <button class="btn btn-outline-success btn-sm" onclick="phoneAgentWeb.exportScript('${script.id}', 'python')">
+                                            <i class="fas fa-file-code me-1"></i>导出Python脚本
+                                        </button>
+                                        <button class="btn btn-outline-warning btn-sm" onclick="phoneAgentWeb.replayScript('${script.id}')">
+                                            <i class="fas fa-play me-1"></i>重放脚本
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" onclick="phoneAgentWeb.deleteScript('${script.id}')">
+                                            <i class="fas fa-trash me-1"></i>删除脚本
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr>
+
+                            <h6><i class="fas fa-list-ol me-2"></i>执行步骤</h6>
+                            <div class="script-steps" style="max-height: 400px; overflow-y: auto;">
+                                ${this.renderScriptSteps(script.script_data?.steps || [])}
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 移除现有模态框
+        const existingModal = document.getElementById('scriptDetailsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        // 添加新模态框到页面
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('scriptDetailsModal'));
+        modal.show();
+
+        // 模态框关闭后移除DOM
+        document.getElementById('scriptDetailsModal').addEventListener('hidden.bs.modal', function() {
+            this.remove();
+        });
+    }
+
+    renderScriptSteps(steps) {
+        if (!steps || steps.length === 0) {
+            return '<p class="text-muted">暂无执行步骤</p>';
+        }
+
+        return steps.map((step, index) => {
+            const successClass = step.success ? 'text-success' : 'text-danger';
+            const successIcon = step.success ? 'fa-check-circle' : 'fa-times-circle';
+
+            return `
+                <div class="card mb-2">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="fas ${successIcon} ${successClass} me-2"></i>
+                            <strong>步骤 ${step.step_number}: ${step.action_type}</strong>
+                        </span>
+                        <small class="text-muted">${step.timestamp ? new Date(step.timestamp).toLocaleTimeString() : ''}</small>
+                    </div>
+                    <div class="card-body">
+                        ${step.thinking ? `<p class="mb-2"><em>思考过程:</em> ${step.thinking}</p>` : ''}
+                        ${step.action_data ? `<pre class="bg-light p-2 rounded"><code>${JSON.stringify(step.action_data, null, 2)}</code></pre>` : ''}
+                        ${step.error_message ? `<div class="alert alert-danger alert-sm mt-2">${step.error_message}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async exportScript(scriptId, format) {
+        try {
+            const response = await fetch(`/api/scripts/${scriptId}/export?format=${format}`);
+
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `script_${scriptId}.${format}`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                this.showToast(`脚本已导出为${format.toUpperCase()}格式`, 'success');
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '导出脚本失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error exporting script:', error);
+            this.showToast('导出脚本失败', 'error');
+        }
+    }
+
+    async replayScript(scriptId) {
+        try {
+            const device_id = prompt('请输入设备ID（留空使用默认设备）:');
+            const delay = prompt('请输入操作延迟（秒，默认1.0）:') || '1.0';
+
+            const response = await fetch(`/api/scripts/${scriptId}/replay`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    device_id: device_id || null,
+                    delay: parseFloat(delay)
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast(data.message || '脚本重放已启动', 'success');
+
+                // 在实际实现中，这里可以启动一个实时进度显示
+                console.log('Replay data:', data);
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '启动脚本重放失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error replaying script:', error);
+            this.showToast('启动脚本重放失败', 'error');
+        }
+    }
+
+    async deleteScript(scriptId) {
+        if (!confirm('确定要删除这个脚本吗？此操作无法撤销。')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/scripts/${scriptId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                this.showToast(data.message || '脚本已删除', 'success');
+
+                // 关闭模态框
+                const modal = bootstrap.Modal.getInstance(document.getElementById('scriptDetailsModal'));
+                if (modal) {
+                    modal.hide();
+                }
+
+                // 刷新任务历史
+                await this.loadTaskHistory();
+            } else {
+                const errorData = await response.json();
+                this.showToast(errorData.error || '删除脚本失败', 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting script:', error);
+            this.showToast('删除脚本失败', 'error');
+        }
+    }
+
+    async getCurrentConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (response.ok) {
+                const configs = await response.json();
+                return configs.default || {};
+            }
+        } catch (error) {
+            console.error('Error loading config:', error);
+        }
+        return {};
+    }
+
+    updateDeviceList(devices) {
+        const container = document.getElementById('device-list');
+
+        if (devices.length === 0) {
+            container.innerHTML = `
+                <div class="text-warning">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    未找到连接的设备
+                </div>
+            `;
+            return;
+        }
+
+        const devicesHtml = devices.map(device => `
+            <div class="device-item ${device.connection_type}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>${device.device_id}</strong>
+                        <div class="small text-muted">${device.model || 'Unknown'}</div>
+                    </div>
+                    <span class="badge bg-${device.connection_type === 'usb' ? 'success' : 'info'}">
+                        ${device.connection_type.toUpperCase()}
+                    </span>
+                </div>
+            </div>
+        `).join('');
+
+        container.innerHTML = devicesHtml;
+    }
+
+    updateAppsList(apps) {
+        const container = document.getElementById('apps-list');
+
+        if (apps.length === 0) {
+            container.innerHTML = `
+                <div class="text-muted">加载应用列表失败</div>
+            `;
+            return;
+        }
+
+        const appsHtml = apps.slice(0, 20).map(app =>
+            `<span class="app-badge">${app}</span>`
+        ).join('');
+
+        container.innerHTML = appsHtml +
+            (apps.length > 20 ? `<div class="text-muted small mt-2">...等 ${apps.length} 个应用</div>` : '');
+    }
+
+    getRoleIcon(role) {
+        const icons = {
+            'user': 'fas fa-user',
+            'assistant': 'fas fa-robot',
+            'system': 'fas fa-cog'
+        };
+        return icons[role] || 'fas fa-comment';
+    }
+
+    getStatusText(status) {
+        const texts = {
+            'idle': '空闲',
+            'running': '执行中',
+            'completed': '已完成',
+            'error': '错误',
+            'stopped': '已停止'
+        };
+        return texts[status] || status;
+    }
+
+    formatMessage(content) {
+        // 首先检查是否包含 Markdown 语法
+        const hasMarkdown = this.hasMarkdownSyntax(content);
+
+        if (hasMarkdown) {
+            // 使用 Marked.js 渲染 Markdown
+            try {
+                // 配置 Marked.js 选项
+                marked.setOptions({
+                    breaks: true,  // 支持换行
+                    gfm: true,     // 支持GitHub风格的Markdown
+                    sanitize: false, // 允许HTML（已通过escapeHtml处理）
+                    smartLists: true,
+                    smartypants: true
+                });
+
+                // 渲染 Markdown
+                content = marked.parse(content);
+            } catch (error) {
+                console.error('Markdown 渲染错误:', error);
+                // 如果渲染失败，回退到原始格式化方法
+                return this.formatBasicMessage(content);
+            }
+        } else {
+            // 如果没有 Markdown 语法，使用基础格式化
+            return this.formatBasicMessage(content);
+        }
+
+        return content;
+    }
+
+    hasMarkdownSyntax(content) {
+        // 检查常见的 Markdown 语法模式
+        const markdownPatterns = [
+            /^#{1,6}\s/m,           // 标题 # ## ###
+            /^\*{1,2}(.+?)\*{1,2}/m, // 斜体 *text* 或粗体 **text**
+            /^_{1,2}(.+?)_{1,2}/m,    // 斜体 _text_ 或粗体 __text__
+            /^\[.+\]\(.+\)/m,        // 链接 [text](url)
+            /^`{1,3}(.+?)`{1,3}/m,   // 代码 `code` 或 ```code```
+            /^\d+\.\s/m,             // 有序列表 1. 2. 3.
+            /^[-\*+]\s/m,            // 无序列表 - * +
+            /^>\s/m,                 // 引用 >
+            /^\|.*\|/m,              // 表格
+            /^-{3,}/m,               // 分割线 ---
+            /^\*{3,}/m               // 分割线 ***
+        ];
+
+        return markdownPatterns.some(pattern => pattern.test(content));
+    }
+
+    formatBasicMessage(content) {
+        // 基础格式化（原有的逻辑）
+        content = this.escapeHtml(content);
+
+        // Convert URLs to links
+        content = content.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank">$1</a>');
+
+        // 处理代码块
+        content = content.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, language, code) => {
+            const lang = language || '';
+            return `<div class="code-block mt-2 mb-2">
+                <div class="code-header">
+                    <small class="text-muted">${lang || 'code'}</small>
+                </div>
+                <pre><code class="language-${lang}">${this.escapeHtml(code.trim())}</code></pre>
+            </div>`;
+        });
+
+        // 处理行内代码
+        content = content.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+        // 处理粗体和斜体
+        content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        content = content.replace(/__(.+?)__/g, '<strong>$1</strong>');
+        content = content.replace(/_(.+?)_/g, '<em>$1</em>');
+
+        // 处理换行
+        content = content.replace(/\n/g, '<br>');
+
+        return content;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    updateTaskHistoryList(tasks) {
+        const container = document.getElementById('task-history-list');
+
+        if (!tasks || tasks.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <div class="mb-3">
+                        <i class="fas fa-history fa-3x opacity-50"></i>
+                    </div>
+                    <h5 class="mb-2">暂无任务历史</h5>
+                    <p class="small">
+                        还没有执行过任何任务。<br>
+                        <a href="#" onclick="phoneAgentWeb.switchTab('control')" class="text-primary">
+                            点击这里开始执行第一个任务
+                        </a>
+                    </p>
+                </div>
+            `;
+            return;
+        }
+
+        const tasksHtml = tasks.map(task => {
+            const statusClass = task.status;
+            const statusText = this.getStatusText(task.status);
+            const timeAgo = this.getTimeAgo(task.start_time);
+
+            return `
+                <div class="task-history-item ${statusClass}" data-task-id="${task.task_id}">
+                    <div class="task-header">
+                        <div class="task-title" title="${task.task_description || '无任务描述'}">
+                            ${task.task_description ? task.task_description.substring(0, 30) + (task.task_description.length > 30 ? '...' : '') : '无任务描述'}
+                        </div>
+                        <span class="task-status bg-${statusClass === 'running' ? 'success' : statusClass === 'completed' ? 'primary' : statusClass === 'error' ? 'danger' : statusClass === 'stopped' ? 'warning' : 'secondary'} text-white">
+                            ${statusText}
+                        </span>
+                    </div>
+                    <div class="task-time">${timeAgo}</div>
+                    ${task.task_description && task.task_description.length > 30 ? `<div class="task-description">${task.task_description}</div>` : ''}
+                    <div class="task-actions">
+                        ${task.status === 'running' ? `
+                            <button class="stop-btn" onclick="phoneAgentWeb.stopHistoryTask('${task.task_id}')">
+                                <i class="fas fa-stop"></i> 停止
+                            </button>
+                        ` : ''}
+                        ${task.script_id ? `
+                            <button class="script-btn" onclick="phoneAgentWeb.viewScript('${task.script_id}')" title="查看脚本">
+                                <i class="fas fa-code"></i> 脚本
+                            </button>
+                        ` : ''}
+                        <button class="view-btn" onclick="phoneAgentWeb.viewTaskDetails('${task.task_id}')">
+                            <i class="fas fa-eye"></i> 查看
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = tasksHtml;
+    }
+
+    showTaskDetails(task) {
+        // 创建模态框显示任务详情
+        const modalHtml = `
+            <div class="modal fade" id="taskDetailsModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">任务详情</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-sm-3"><strong>任务ID:</strong></div>
+                                <div class="col-sm-9"><code>${task.task_id}</code></div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-sm-3"><strong>任务描述:</strong></div>
+                                <div class="col-sm-9">${task.task_description || '无'}</div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-sm-3"><strong>状态:</strong></div>
+                                <div class="col-sm-9">
+                                    <span class="badge bg-${task.status === 'running' ? 'success' : task.status === 'completed' ? 'primary' : task.status === 'error' ? 'danger' : task.status === 'stopped' ? 'warning' : 'secondary'}">
+                                        ${this.getStatusText(task.status)}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-sm-3"><strong>会话ID:</strong></div>
+                                <div class="col-sm-9"><code>${task.session_id}</code></div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-sm-3"><strong>开始时间:</strong></div>
+                                <div class="col-sm-9">${new Date(task.start_time).toLocaleString()}</div>
+                            </div>
+                            ${task.end_time ? `
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>结束时间:</strong></div>
+                                    <div class="col-sm-9">${new Date(task.end_time).toLocaleString()}</div>
+                                </div>
+                            ` : ''}
+                            ${task.result ? `
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>执行结果:</strong></div>
+                                    <div class="col-sm-9">
+                                        <div class="alert alert-info">
+                                            <pre style="white-space: pre-wrap; margin: 0;">${this.escapeHtml(task.result)}</pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${task.error_message ? `
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>错误信息:</strong></div>
+                                    <div class="col-sm-9">
+                                        <div class="alert alert-danger">
+                                            <pre style="white-space: pre-wrap; margin: 0;">${this.escapeHtml(task.error_message)}</pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                            ${task.status === 'running' ? `
+                                <button type="button" class="btn btn-danger" onclick="phoneAgentWeb.stopHistoryTask('${task.global_task_id}'); bootstrap.Modal.getInstance(document.getElementById('taskDetailsModal')).hide();">
+                                    <i class="fas fa-stop"></i> 停止任务
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 移除现有的模态框
+        const existingModal = document.getElementById('taskDetailsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+
+        // 添加新的模态框
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // 显示模态框
+        const modal = new bootstrap.Modal(document.getElementById('taskDetailsModal'));
+        modal.show();
+    }
+
+    getTimeAgo(timestamp) {
+        const now = new Date();
+        const time = new Date(timestamp);
+        const diff = Math.floor((now - time) / 1000); // 秒数差
+
+        if (diff < 60) {
+            return '刚刚';
+        } else if (diff < 3600) {
+            return `${Math.floor(diff / 60)} 分钟前`;
+        } else if (diff < 86400) {
+            return `${Math.floor(diff / 3600)} 小时前`;
+        } else if (diff < 604800) {
+            return `${Math.floor(diff / 86400)} 天前`;
+        } else {
+            return time.toLocaleDateString();
+        }
+    }
+
+    showTaskHistoryLoading(show) {
+        const container = document.getElementById('task-history-list');
+        if (show) {
+            container.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2 text-muted">正在加载任务历史...</p>
+                </div>
+            `;
+        }
+    }
+
+    showToast(message, type = 'info') {
+        const toastElement = document.getElementById('toast');
+        const toastMessage = document.getElementById('toast-message');
+        const toastHeader = toastElement.querySelector('.toast-header strong');
+
+        // Update toast content
+        toastMessage.textContent = message;
+
+        // Update toast style based on type
+        toastElement.className = 'toast';
+        toastHeader.className = 'me-auto';
+
+        if (type === 'success') {
+            toastElement.classList.add('bg-success', 'text-white');
+            toastHeader.textContent = '成功';
+        } else if (type === 'error') {
+            toastElement.classList.add('bg-danger', 'text-white');
+            toastHeader.textContent = '错误';
+        } else if (type === 'warning') {
+            toastElement.classList.add('bg-warning', 'text-dark');
+            toastHeader.textContent = '警告';
+        } else {
+            toastHeader.textContent = '信息';
+        }
+
+        // Show toast
+        const toast = new bootstrap.Toast(toastElement);
+        toast.show();
+    }
+
+    initFloatingScreenshot() {
+        try {
+            this.floatingScreenshot = new FloatingScreenshotManager();
+            console.log('Floating screenshot initialized');
+        } catch (error) {
+            console.error('Failed to initialize floating screenshot:', error);
+            this.floatingScreenshot = null;
+        }
+    }
+}
+
+// Initialize the application when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.phoneAgentWeb = new PhoneAgentWeb();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (window.phoneAgentWeb) {
+        // 清理定时器
+        if (window.phoneAgentWeb.updateTimer) {
+            clearInterval(window.phoneAgentWeb.updateTimer);
+        }
+        if (window.phoneAgentWeb.batchProcessTimer) {
+            clearTimeout(window.phoneAgentWeb.batchProcessTimer);
+        }
+        // 清理SmartScroller
+        if (window.phoneAgentWeb.smartScroller) {
+            window.phoneAgentWeb.smartScroller.destroy();
+        }
+    }
+});
+
+/**
+ * Floating Screenshot Manager
+ * Manages the floating screenshot window functionality
+ */
+class FloatingScreenshotManager {
+    constructor() {
+        this.window = document.getElementById('floating-screenshot');
+        this.header = document.querySelector('.floating-screenshot-header');
+        this.toggleBtn = document.getElementById('screenshot-toggle-btn');
+
+        this.isVisible = false;
+        this.isDragging = false;
+        this.isMinimized = false;
+        this.isMaximized = false;
+
+        // Position management
+        this.position = {
+            x: 0,
+            y: 0
+        };
+
+        // Drag state
+        this.dragState = {
+            startX: 0,
+            startY: 0,
+            startLeft: 0,
+            startTop: 0
+        };
+
+        this.init();
+    }
+
+    init() {
+        if (!this.window) {
+            console.warn('Floating screenshot window not found');
+            return;
+        }
+
+        // Load saved state
+        this.loadState();
+
+        // Setup event listeners
+        this.setupDragListeners();
+        this.setupControlButtons();
+        this.setupKeyboardListeners();
+
+        // Initialize position
+        this.initializePosition();
+
+        // Setup window resize handling
+        this.setupResizeHandling();
+
+        console.log('Floating screenshot manager initialized');
+    }
+
+    loadState() {
+        try {
+            const savedState = localStorage.getItem('floating-screenshot-state');
+            if (savedState) {
+                const state = JSON.parse(savedState);
+                this.isVisible = state.isVisible !== false; // Default to true
+                this.position = state.position || { x: 0, y: 0 };
+                this.isMinimized = state.isMinimized || false;
+                this.isMaximized = state.isMaximized || false;
+            }
+        } catch (error) {
+            console.warn('Failed to load floating screenshot state:', error);
+        }
+    }
+
+    saveState() {
+        try {
+            const state = {
+                isVisible: this.isVisible,
+                position: this.position,
+                isMinimized: this.isMinimized,
+                isMaximized: this.isMaximized
+            };
+            localStorage.setItem('floating-screenshot-state', JSON.stringify(state));
+        } catch (error) {
+            console.warn('Failed to save floating screenshot state:', error);
+        }
+    }
+
+    initializePosition() {
+        // Set initial position from saved state or defaults
+        if (this.position.x !== 0 || this.position.y !== 0) {
+            this.setPosition(this.position.x, this.position.y);
+        } else {
+            // Default position - top right of chat area
+            const chatArea = document.querySelector('.chat-area');
+            if (chatArea) {
+                const rect = chatArea.getBoundingClientRect();
+                const windowWidth = 300; // Default width
+                const windowX = rect.right - windowWidth - 20;
+                const windowY = rect.top + 80; // Below header
+                this.setPosition(windowX, windowY);
+            }
+        }
+
+        // Apply initial visibility
+        if (this.isVisible) {
+            this.show();
+        } else {
+            this.hide();
+        }
+
+        // Apply minimized/maximized state
+        if (this.isMinimized) {
+            this.minimize();
+        } else if (this.isMaximized) {
+            this.maximize();
+        }
+    }
+
+    setupDragListeners() {
+        if (!this.header) return;
+
+        // Mouse events
+        this.header.addEventListener('mousedown', this.handleMouseDown.bind(this));
+        document.addEventListener('mousemove', this.handleMouseMove.bind(this));
+        document.addEventListener('mouseup', this.handleMouseUp.bind(this));
+
+        // Touch events
+        this.header.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: false });
+        document.addEventListener('touchmove', this.handleTouchMove.bind(this), { passive: false });
+        document.addEventListener('touchend', this.handleTouchEnd.bind(this));
+
+        // Prevent text selection during drag
+        this.header.addEventListener('selectstart', (e) => {
+            if (this.isDragging) {
+                e.preventDefault();
+            }
+        });
+    }
+
+    setupControlButtons() {
+        const minimizeBtn = this.window.querySelector('.minimize-btn');
+        const maximizeBtn = this.window.querySelector('.maximize-btn');
+        const closeBtn = this.window.querySelector('.close-btn');
+
+        if (minimizeBtn) {
+            minimizeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.minimize();
+            });
+        }
+
+        if (maximizeBtn) {
+            maximizeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.isMaximized) {
+                    this.restore();
+                } else {
+                    this.maximize();
+                }
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.hide();
+            });
+        }
+    }
+
+    setupKeyboardListeners() {
+        // ESC key to close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.isVisible) {
+                this.hide();
+            }
+        });
+
+        // Double click header to maximize/restore
+        if (this.header) {
+            this.header.addEventListener('dblclick', () => {
+                if (this.isMaximized) {
+                    this.restore();
+                } else {
+                    this.maximize();
+                }
+            });
+        }
+    }
+
+    setupResizeHandling() {
+        // Adjust position on window resize to keep it visible
+        window.addEventListener('resize', () => {
+            if (this.isVisible && !this.isMaximized) {
+                this.constrainToViewport();
+            }
+        });
+    }
+
+    handleMouseDown(e) {
+        if (this.isMaximized) return;
+
+        this.isDragging = true;
+        this.dragState.startX = e.clientX;
+        this.dragState.startY = e.clientY;
+        this.dragState.startLeft = this.position.x;
+        this.dragState.startTop = this.position.y;
+
+        this.window.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+
+        e.preventDefault();
+    }
+
+    handleMouseMove(e) {
+        if (!this.isDragging) return;
+
+        const deltaX = e.clientX - this.dragState.startX;
+        const deltaY = e.clientY - this.dragState.startY;
+
+        const newX = this.dragState.startLeft + deltaX;
+        const newY = this.dragState.startTop + deltaY;
+
+        this.setPosition(newX, newY);
+    }
+
+    handleMouseUp(e) {
+        if (!this.isDragging) return;
+
+        this.isDragging = false;
+        this.window.classList.remove('dragging');
+        document.body.style.userSelect = '';
+
+        this.saveState();
+    }
+
+    handleTouchStart(e) {
+        if (this.isMaximized) return;
+
+        const touch = e.touches[0];
+        this.handleMouseDown({
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            preventDefault: () => e.preventDefault()
+        });
+    }
+
+    handleTouchMove(e) {
+        if (!this.isDragging) return;
+
+        const touch = e.touches[0];
+        this.handleMouseMove({
+            clientX: touch.clientX,
+            clientY: touch.clientY
+        });
+    }
+
+    handleTouchEnd(e) {
+        this.handleMouseUp({});
+    }
+
+    setPosition(x, y) {
+        this.position.x = x;
+        this.position.y = y;
+
+        this.constrainToViewport();
+
+        this.window.style.left = `${this.position.x}px`;
+        this.window.style.top = `${this.position.y}px`;
+    }
+
+    constrainToViewport() {
+        const windowRect = this.window.getBoundingClientRect();
+        const viewport = {
+            width: window.innerWidth,
+            height: window.innerHeight
+        };
+
+        // Constrain horizontally
+        if (this.position.x < 10) {
+            this.position.x = 10;
+        } else if (this.position.x + windowRect.width > viewport.width - 10) {
+            this.position.x = viewport.width - windowRect.width - 10;
+        }
+
+        // Constrain vertically
+        if (this.position.y < 10) {
+            this.position.y = 10;
+        } else if (this.position.y + windowRect.height > viewport.height - 10) {
+            this.position.y = viewport.height - windowRect.height - 10;
+        }
+    }
+
+    toggleVisibility() {
+        if (this.isVisible) {
+            this.hide();
+        } else {
+            this.show();
+        }
+    }
+
+    show() {
+        this.isVisible = true;
+        this.window.classList.remove('hidden');
+
+        if (this.toggleBtn) {
+            this.toggleBtn.classList.add('active');
+            this.toggleBtn.querySelector('i').className = 'fas fa-eye-slash';
+        }
+
+        this.saveState();
+    }
+
+    hide() {
+        this.isVisible = false;
+        this.window.classList.add('hidden');
+
+        if (this.toggleBtn) {
+            this.toggleBtn.classList.remove('active');
+            this.toggleBtn.querySelector('i').className = 'fas fa-eye';
+        }
+
+        this.saveState();
+    }
+
+    minimize() {
+        this.isMinimized = true;
+        this.isMaximized = false;
+        this.window.classList.add('minimized');
+        this.window.classList.remove('maximized');
+
+        // Update maximize button icon
+        const maximizeBtn = this.window.querySelector('.maximize-btn i');
+        if (maximizeBtn) {
+            maximizeBtn.className = 'fas fa-expand';
+        }
+
+        this.saveState();
+    }
+
+    maximize() {
+        this.isMinimized = false;
+        this.isMaximized = true;
+        this.window.classList.add('maximized');
+        this.window.classList.remove('minimized');
+
+        // Update maximize button icon
+        const maximizeBtn = this.window.querySelector('.maximize-btn i');
+        if (maximizeBtn) {
+            maximizeBtn.className = 'fas fa-compress';
+        }
+
+        this.saveState();
+    }
+
+    restore() {
+        this.isMinimized = false;
+        this.isMaximized = false;
+        this.window.classList.remove('minimized', 'maximized');
+
+        // Update maximize button icon
+        const maximizeBtn = this.window.querySelector('.maximize-btn i');
+        if (maximizeBtn) {
+            maximizeBtn.className = 'fas fa-expand';
+        }
+
+        this.saveState();
+    }
+
+    destroy() {
+        // Remove event listeners
+        if (this.header) {
+            this.header.removeEventListener('mousedown', this.handleMouseDown.bind(this));
+            this.header.removeEventListener('touchstart', this.handleTouchStart.bind(this));
+        }
+
+        document.removeEventListener('mousemove', this.handleMouseMove.bind(this));
+        document.removeEventListener('mouseup', this.handleMouseUp.bind(this));
+        document.removeEventListener('touchmove', this.handleTouchMove.bind(this));
+        document.removeEventListener('touchend', this.handleTouchEnd.bind(this));
+
+        // Clear references
+        this.window = null;
+        this.header = null;
+        this.toggleBtn = null;
+    }
+
+    // ==================== 任务详情面板相关方法 ====================
+
+    initTaskDetailsPanel() {
+        const panel = document.getElementById('task-details-panel');
+        if (panel) {
+            // 默认隐藏任务详情面板
+            panel.classList.add('hidden');
+            this.taskDetailsPanel.isVisible = false;
+        }
+    }
+
+    toggleTaskDetailsPanel() {
+        const panel = document.getElementById('task-details-panel');
+        if (!panel) return;
+
+        if (this.taskDetailsPanel.isVisible) {
+            this.hideTaskDetailsPanel();
+        } else {
+            this.showTaskDetailsPanel();
+        }
+    }
+
+    showTaskDetailsPanel() {
+        const panel = document.getElementById('task-details-panel');
+        if (!panel) return;
+
+        panel.classList.remove('hidden');
+        panel.classList.add('visible');
+        this.taskDetailsPanel.isVisible = true;
+
+        // 如果是移动设备，需要更新布局
+        this.updateResponsiveLayout();
+    }
+
+    hideTaskDetailsPanel() {
+        const panel = document.getElementById('task-details-panel');
+        if (!panel) return;
+
+        panel.classList.remove('visible');
+        panel.classList.add('hidden');
+        this.taskDetailsPanel.isVisible = false;
+
+        // 如果是移动设备，需要更新布局
+        this.updateResponsiveLayout();
+    }
+
+    updateResponsiveLayout() {
+        const width = window.innerWidth;
+        const panel = document.getElementById('task-details-panel');
+        if (!panel) return;
+
+        // 移动设备的特殊处理
+        if (width <= 768) {
+            if (this.taskDetailsPanel.isVisible) {
+                document.body.style.overflow = 'hidden'; // 防止背景滚动
+            } else {
+                document.body.style.overflow = '';
+            }
+        }
+    }
+
+    updateTaskDetails(taskData, stepData, resultData) {
+        if (!this.taskDetailsPanel.isVisible) {
+            this.showTaskDetailsPanel();
+        }
+
+        this.taskDetailsPanel.currentTask = taskData;
+        this.taskDetailsPanel.steps = stepData || [];
+        this.taskDetailsPanel.taskResult = resultData;
+
+        this.renderTaskDetailsContent();
+    }
+
+    renderTaskDetailsContent() {
+        const content = document.getElementById('task-details-content');
+        if (!content) return;
+
+        let html = '';
+
+        // 任务基本信息
+        if (this.taskDetailsPanel.currentTask) {
+            html += this.renderTaskInfo();
+        }
+
+        // 执行结果
+        if (this.taskDetailsPanel.taskResult) {
+            html += this.renderTaskResult();
+        }
+
+        // 执行步骤
+        if (this.taskDetailsPanel.steps && this.taskDetailsPanel.steps.length > 0) {
+            html += this.renderTaskSteps();
+        }
+
+        content.innerHTML = html;
+
+        // 添加步骤点击事件
+        this.attachStepEventListeners();
+    }
+
+    renderTaskInfo() {
+        const task = this.taskDetailsPanel.currentTask;
+        const currentTime = new Date();
+        const executionTime = this.taskStartTime ?
+            Math.floor((currentTime - this.taskStartTime) / 1000) : 0;
+
+        return `
+            <div class="task-info-section">
+                <h6><i class="fas fa-info-circle me-2"></i>任务信息</h6>
+                <div class="task-info-item">
+                    <span class="task-info-label">任务名称:</span>
+                    <span class="task-info-value">${this.escapeHtml(task.task_name || 'N/A')}</span>
+                </div>
+                <div class="task-info-item">
+                    <span class="task-info-label">状态:</span>
+                    <span class="task-info-value">
+                        <span class="badge bg-${this.getStatusBadgeClass(task.status)}">${task.status || '未知'}</span>
+                    </span>
+                </div>
+                <div class="task-info-item">
+                    <span class="task-info-label">步数:</span>
+                    <span class="task-info-value">${this.stepCount}</span>
+                </div>
+                <div class="task-info-item">
+                    <span class="task-info-label">执行时间:</span>
+                    <span class="task-info-value">${executionTime}s</span>
+                </div>
+            </div>
+        `;
+    }
+
+    renderTaskResult() {
+        const result = this.taskDetailsPanel.taskResult;
+        return `
+            <div class="task-result-section">
+                <h6><i class="fas fa-clipboard-check me-2"></i>执行结果</h6>
+                <div class="task-result-content">
+                    ${this.escapeHtml(String(result))}
+                </div>
+            </div>
+        `;
+    }
+
+    renderTaskSteps() {
+        const steps = this.taskDetailsPanel.steps;
+        return `
+            <div class="task-steps-section">
+                <h6><i class="fas fa-list-ol me-2"></i>执行步骤</h6>
+                ${steps.map((step, index) => this.renderStepItem(step, index)).join('')}
+            </div>
+        `;
+    }
+
+    renderStepItem(step, index) {
+        const successClass = step.success ? 'task-step-success' : 'task-step-error';
+        const successIcon = step.success ? 'fa-check-circle' : 'fa-times-circle';
+        const hasResult = step.result && step.result.trim();
+
+        return `
+            <div class="task-step-item" data-step-index="${index}">
+                <div class="task-step-header">
+                    <div>
+                        <span class="task-step-number">步骤 ${index + 1}</span>
+                        <div class="task-step-action">${this.escapeHtml(step.action_type || 'N/A')}</div>
+                    </div>
+                    <i class="fas ${successIcon} ${successClass.replace('task-step-', 'text-')}"></i>
+                </div>
+                <div class="task-step-content">
+                    ${step.action ? `<div class="task-step-detail">
+                        <strong>动作:</strong>
+                        <code>${this.escapeHtml(JSON.stringify(step.action))}</code>
+                    </div>` : ''}
+
+                    ${hasResult ? `<div class="task-step-result ${successClass}">
+                        <strong>结果:</strong> ${this.escapeHtml(String(step.result))}
+                    </div>` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    attachStepEventListeners() {
+        const stepHeaders = document.querySelectorAll('.task-step-header');
+        stepHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                const stepItem = header.closest('.task-step-item');
+                if (stepItem) {
+                    stepItem.classList.toggle('expanded');
+                }
+            });
+        });
+    }
+
+    getStatusBadgeClass(status) {
+        const statusMap = {
+            'running': 'primary',
+            'completed': 'success',
+            'error': 'danger',
+            'stopped': 'warning',
+            'idle': 'secondary'
+        };
+        return statusMap[status] || 'secondary';
+    }
+
+    // 重写任务相关事件处理，将结果发送到任务详情面板
+    onTaskStarted(data) {
+        this.addMessage('system', `开始执行任务: ${data.task_name}`);
+        this.updateTaskStatus('running');
+        this.setInputEnabled(false);
+        this.taskStartTime = new Date();
+        this.stepCount = 0;
+
+        // 更新任务详情面板
+        this.updateTaskDetails({
+            task_name: data.task_name,
+            status: 'running'
+        }, [], null);
+    }
+
+    onTaskCompleted(data) {
+        this.addMessage('assistant', data.result);
+        this.updateTaskStatus('completed');
+        this.setInputEnabled(true);
+        this.showToast('任务执行完成', 'success');
+
+        // 更新任务详情面板
+        this.updateTaskDetails({
+            task_name: data.task_name || '已完成任务',
+            status: 'completed'
+        }, this.taskDetailsPanel.steps, data.result);
+    }
+
+    onTaskError(data) {
+        this.addMessage('system', `任务执行出错: ${data.error}`);
+        this.updateTaskStatus('error');
+        this.setInputEnabled(true);
+
+        // 更新任务详情面板
+        this.updateTaskDetails({
+            task_name: data.task_name || '失败任务',
+            status: 'error'
+        }, this.taskDetailsPanel.steps, `错误: ${data.error}`);
+    }
+
+    onTaskStopped(data) {
+        this.addMessage('system', '任务已停止');
+        this.updateTaskStatus('stopped');
+        this.setInputEnabled(true);
+
+        // 更新任务详情面板
+        this.updateTaskDetails({
+            task_name: data.task_name || '已停止任务',
+            status: 'stopped'
+        }, this.taskDetailsPanel.steps, '任务已被用户停止');
+    }
+
+    onStepUpdate(data) {
+        this.stepCount++;
+
+        // 构建步骤消息（用于聊天记录）
+        let stepMessage = `<div class="step-info">
+            <strong>步骤 ${this.stepCount}:</strong> ${data.action_type || 'N/A'}
+        </div>`;
+
+        if (data.action) {
+            stepMessage += `<div class="step-action">
+                <strong>动作:</strong> <code>${JSON.stringify(data.action)}</code>
+            </div>`;
+        }
+
+        if (data.result) {
+            stepMessage += `<div class="step-result">
+                <i class="fas fa-check-circle me-1"></i>
+                <strong>结果:</strong> ${this.escapeHtml(String(data.result))}
+            </div>`;
+        }
+
+        // 添加步骤更新到聊天
+        this.addStepUpdate(`步骤 ${this.stepCount}`, stepMessage);
+
+        // 更新步骤计数
+        document.getElementById('step-count').textContent = this.stepCount;
+
+        // 更新截图
+        if (data.screenshot) {
+            this.updateScreenshot(data.screenshot);
+        }
+
+        // 更新任务详情面板的步骤信息
+        if (this.taskDetailsPanel.steps) {
+            this.taskDetailsPanel.steps.push(data);
+            this.renderTaskDetailsContent();
+        }
+    }
+}
+
+// Global function for refreshing task history (called from HTML)
+function refreshTaskHistory() {
+    if (window.phoneAgentWeb) {
+        window.phoneAgentWeb.loadTaskHistory();
+    }
+}

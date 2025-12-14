@@ -1,18 +1,73 @@
 """Main PhoneAgent class for orchestrating phone automation."""
 
+import base64
 import json
+import logging
 import traceback
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from phone_agent.actions import ActionHandler
 from phone_agent.actions.handler import do, finish, parse_action
 from phone_agent.adb import get_current_app, get_screenshot
+from phone_agent.adb.screenshot import Screenshot
 from phone_agent.config import get_messages, get_system_prompt
 from phone_agent.model import ModelClient, ModelConfig
 from phone_agent.model.client import MessageBuilder
 from phone_agent.recorder import ScriptRecorder
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+
+def _save_screenshot_to_file(screenshot: Screenshot, save_dir: Path) -> Optional[str]:
+    """
+    Save screenshot to file and return filename.
+
+    Args:
+        screenshot: Screenshot object with base64_data
+        save_dir: Directory to save screenshot files
+
+    Returns:
+        filename (e.g. 'screenshot_20251213_221530_a1b2c3d4.png') or None if failed
+    """
+    if not screenshot or not screenshot.base64_data:
+        return None
+
+    try:
+        # Generate unique filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        short_uuid = uuid.uuid4().hex[:8]
+        filename = f"screenshot_{timestamp}_{short_uuid}.png"
+
+        # Ensure directory exists
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        # Decode base64 and save
+        filepath = save_dir / filename
+        image_data = base64.b64decode(screenshot.base64_data)
+        filepath.write_bytes(image_data)
+
+        logger.debug(f"Screenshot saved: {filename} ({len(image_data)} bytes)")
+        return filename
+    except OSError as e:
+        if hasattr(e, 'errno'):
+            import errno
+            if e.errno == errno.ENOSPC:
+                logger.error("Disk full, cannot save screenshot")
+            elif e.errno == errno.EACCES:
+                logger.error("Permission denied, cannot save screenshot")
+            else:
+                logger.error(f"Failed to save screenshot: {e}")
+        else:
+            logger.error(f"Failed to save screenshot: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to save screenshot: {e}")
+        return None
 
 
 @dataclass
@@ -287,12 +342,20 @@ class PhoneAgent:
 
         # Call step callback if provided
         if step_callback:
+            # Save screenshot to file
+            screenshot_filename = None
+            if screenshot and screenshot.base64_data:
+                # Determine screenshots directory (relative to web/static/screenshots)
+                # Navigate from phone_agent/ to web/static/screenshots/
+                screenshots_dir = Path(__file__).parent.parent / 'web' / 'static' / 'screenshots'
+                screenshot_filename = _save_screenshot_to_file(screenshot, screenshots_dir)
+
             step_data = {
                 'step_number': self._step_count,
                 'thinking': response.thinking,
                 'action': action,
                 'result': result,
-                'screenshot': screenshot.base64_data[:100] + '...' if screenshot.base64_data else None,  # Truncate for performance
+                'screenshot': screenshot_filename,  # Send filename instead of base64 data
                 'success': result.success,
                 'finished': finished
             }

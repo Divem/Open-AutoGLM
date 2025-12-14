@@ -60,20 +60,64 @@ def check_adb_connection():
         return True  # Don't block startup for ADB issues
 
 
-def check_model_service(base_url="http://localhost:8000/v1"):
+def check_model_service(base_url=None):
     """Check if model service is available"""
     try:
+        import os
         import requests
-        response = requests.get(f"{base_url}/models", timeout=5)
-        if response.status_code == 200:
-            print("✅ Model service is available")
-            return True
+
+        # Load .env file
+        env_file = Path(__file__).parent / '.env'
+        if env_file.exists():
+            with open(env_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+
+        # Use environment variable if no base_url provided
+        if base_url is None:
+            base_url = os.getenv('PHONE_AGENT_BASE_URL', 'http://localhost:8000/v1')
+
+        print(f"🧠 Checking model service at: {base_url}")
+
+        # For BigModel API, check with a different endpoint
+        if 'bigmodel.cn' in base_url:
+            # Test by sending a simple chat request
+            headers = {
+                'Authorization': f'Bearer {os.getenv("PHONE_AGENT_API_KEY", "")}',
+                'Content-Type': 'application/json'
+            }
+            data = {
+                "model": "glm-4-flash",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 10
+            }
+
+            response = requests.post(f"{base_url}/chat/completions",
+                                   headers=headers,
+                                   json=data,
+                                   timeout=10)
+            if response.status_code == 200:
+                print("✅ BigModel API service is available")
+                return True
+            else:
+                print(f"⚠️  BigModel API returned status {response.status_code}")
+                return False
         else:
-            print(f"⚠️  Model service returned status {response.status_code}")
-            return False
+            # For local/other model services, check /models endpoint
+            response = requests.get(f"{base_url}/models", timeout=5)
+            if response.status_code == 200:
+                print("✅ Model service is available")
+                return True
+            else:
+                print(f"⚠️  Model service returned status {response.status_code}")
+                return False
+
     except Exception as e:
         print(f"⚠️  Could not connect to model service: {e}")
-        print("The web interface will still start, but tasks will fail until the model service is available")
+        print("The web interface will still start, but tasks may fail until the model service is available")
         return False
 
 
@@ -86,6 +130,10 @@ def start_web_server(host='0.0.0.0', port=5000, debug=False):
     print(f"   URL: http://{host}:{port}")
     print()
 
+    # Add parent directory to path for imports
+    parent_dir = Path(__file__).parent
+    sys.path.insert(0, str(parent_dir))
+
     # Change to web directory
     web_dir = Path(__file__).parent / 'web'
     if web_dir.exists():
@@ -93,6 +141,16 @@ def start_web_server(host='0.0.0.0', port=5000, debug=False):
 
     try:
         # Import and run the web app
+        # Make sure the web directory is in the Python path
+        if str(Path.cwd()) not in sys.path:
+            sys.path.insert(0, str(Path.cwd()))
+
+        # Also add parent directory to path for importing phone_agent modules
+        if str(Path.cwd().parent) not in sys.path:
+            sys.path.insert(0, str(Path.cwd().parent))
+
+        print(f"Python path: {sys.path[:3]}")
+
         from app import PhoneAgentWeb
 
         web_app = PhoneAgentWeb(host=host, port=port, debug=debug)
@@ -102,6 +160,8 @@ def start_web_server(host='0.0.0.0', port=5000, debug=False):
         print("\n👋 Shutting down web server...")
     except Exception as e:
         print(f"❌ Failed to start web server: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -141,7 +201,7 @@ Examples:
         check_adb_connection()
 
         print("\n🧠 Checking model service...")
-        check_model_service(args.model_url)
+        check_model_service()
     else:
         print("\n⏭️  Skipping checks as requested")
 

@@ -10,6 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# 尝试导入脚本管理器（如果在web环境中）
+try:
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent / 'web'))
+    from script_manager import ScriptManager, ScriptRecord
+    SCRIPT_MANAGER_AVAILABLE = True
+except ImportError:
+    SCRIPT_MANAGER_AVAILABLE = False
+
 
 @dataclass
 class ScriptStep:
@@ -53,12 +62,13 @@ class ScriptRecorder:
     along with context information, and can export them as replayable scripts.
     """
 
-    def __init__(self, output_dir: str = "scripts"):
+    def __init__(self, output_dir: str = "scripts", save_to_db: bool = True):
         """
         Initialize the script recorder.
 
         Args:
             output_dir: Directory to save generated scripts
+            save_to_db: Whether to save scripts to database
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
@@ -68,6 +78,16 @@ class ScriptRecorder:
         self.start_time: Optional[float] = None
         self.screenshot_dir = self.output_dir / "screenshots"
         self.screenshot_dir.mkdir(exist_ok=True)
+
+        # 数据库保存相关
+        self.save_to_db = save_to_db
+        self.script_manager = None
+        if save_to_db and SCRIPT_MANAGER_AVAILABLE:
+            try:
+                self.script_manager = ScriptManager()
+            except Exception as e:
+                print(f"警告: 无法初始化脚本管理器，将只保存到本地文件: {e}")
+                self.save_to_db = False
 
     def start_recording(self, task: str, device_id: Optional[str] = None,
                        model_name: Optional[str] = None):
@@ -169,6 +189,59 @@ class ScriptRecorder:
             # Calculate success rate
             successful_steps = sum(1 for step in self.steps if step.success)
             self.metadata.success_rate = round(successful_steps / len(self.steps) * 100, 2) if self.steps else 0
+
+    def save_to_database(self) -> Optional[str]:
+        """
+        Save the recorded script to database.
+
+        Returns:
+            Script ID if successful, None otherwise
+        """
+        if not self.save_to_db or not self.script_manager or not self.metadata:
+            return None
+
+        try:
+            # 创建ScriptRecord对象
+            script_record = ScriptRecord(
+                task_id=self.metadata.task_name[:50] + "..." if len(self.metadata.task_name) > 50 else self.metadata.task_name,
+                task_name=self.metadata.task_name,
+                description=self.metadata.description,
+                total_steps=self.metadata.total_steps,
+                success_rate=self.metadata.success_rate,
+                execution_time=self.metadata.execution_time,
+                device_id=self.metadata.device_id,
+                model_name=self.metadata.model_name,
+                script_data=self.generate_script(),
+                script_metadata=asdict(self.metadata)
+            )
+
+            # 保存到数据库
+            script_id = self.script_manager.save_script(script_record)
+            if script_id:
+                print(f"脚本已保存到数据库: {script_id}")
+            return script_id
+
+        except Exception as e:
+            print(f"保存脚本到数据库时出错: {e}")
+            return None
+
+    def save_to_database_and_file(self, filename: Optional[str] = None) -> Optional[str]:
+        """
+        Save the script to both database and local file.
+
+        Args:
+            filename: Optional filename for local file
+
+        Returns:
+            Script ID if database save was successful, None otherwise
+        """
+        # 保存到本地文件（总是执行）
+        local_file_path = self.save_script(filename)
+        print(f"脚本已保存到本地文件: {local_file_path}")
+
+        # 保存到数据库（如果启用）
+        script_id = self.save_to_database()
+        return script_id
 
     def generate_script(self) -> Dict[str, Any]:
         """

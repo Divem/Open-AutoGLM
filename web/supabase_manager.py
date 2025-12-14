@@ -8,10 +8,21 @@ import os
 import json
 import threading
 import uuid
+import logging
+import dataclasses
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 from supabase import create_client, Client
+
+# 配置日志
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('[%(levelname)s] %(name)s: %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # 从环境变量获取Supabase配置
 SUPABASE_URL = os.getenv('SUPABASE_URL')
@@ -32,6 +43,7 @@ class GlobalTask:
     error_message: Optional[str] = None
     end_time: Optional[datetime] = None
     result: Optional[str] = None
+    script_id: Optional[str] = None  # 在数据库中存储为UUID，Python中使用字符串
 
     def to_dict(self) -> Dict:
         """转换为字典，处理datetime序列化"""
@@ -47,14 +59,38 @@ class GlobalTask:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'GlobalTask':
-        """从字典创建对象，处理datetime反序列化"""
-        if isinstance(data.get('created_at'), str):
-            data['created_at'] = datetime.fromisoformat(data['created_at'])
-        if isinstance(data.get('last_activity'), str):
-            data['last_activity'] = datetime.fromisoformat(data['last_activity'])
-        if data.get('end_time') and isinstance(data['end_time'], str):
-            data['end_time'] = datetime.fromisoformat(data['end_time'])
-        return cls(**data)
+        """从字典创建对象，处理datetime反序列化和字段过滤"""
+        # 1. 获取dataclass定义的所有有效字段
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+
+        # 2. 过滤字典,只保留有效字段
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+
+        # 3. 记录被过滤的字段(用于调试)
+        extra_fields = set(data.keys()) - valid_fields
+        if extra_fields:
+            logger.debug(f"过滤数据库额外字段: {extra_fields}")
+
+        # 4. 类型转换 - datetime字段
+        if 'created_at' in filtered_data and isinstance(filtered_data['created_at'], str):
+            filtered_data['created_at'] = datetime.fromisoformat(filtered_data['created_at'])
+        if 'last_activity' in filtered_data and isinstance(filtered_data['last_activity'], str):
+            filtered_data['last_activity'] = datetime.fromisoformat(filtered_data['last_activity'])
+        if filtered_data.get('end_time') and isinstance(filtered_data['end_time'], str):
+            filtered_data['end_time'] = datetime.fromisoformat(filtered_data['end_time'])
+
+        # 5. 数据修复 - 自动修复缺失的可选字段
+        if 'last_activity' not in filtered_data and 'created_at' in filtered_data:
+            filtered_data['last_activity'] = filtered_data['created_at']
+            logger.debug(f"自动修复: last_activity字段缺失,设置为created_at")
+
+        # 6. 创建对象
+        try:
+            return cls(**filtered_data)
+        except TypeError as e:
+            logger.error(f"创建GlobalTask失败: {e}")
+            logger.error(f"数据: {filtered_data}")
+            raise
 
     # 兼容旧API
     @property
@@ -75,6 +111,15 @@ class GlobalTask:
 
 class SupabaseTaskManager:
     """基于Supabase的全局任务管理器"""
+
+    # 有效的状态枚举值
+    VALID_STATUSES = {'running', 'completed', 'error', 'stopped'}
+
+    # 必需字段列表
+    REQUIRED_FIELDS = {
+        'task_id', 'session_id', 'user_id', 'task_description',
+        'status', 'created_at', 'last_activity', 'config'
+    }
 
     def __init__(self):
         if not SUPABASE_URL or not SUPABASE_KEY:
@@ -117,7 +162,8 @@ class SupabaseTaskManager:
                     thread_id TEXT,
                     error_message TEXT,
                     end_time TIMESTAMPTZ,
-                    result TEXT
+                    result TEXT,
+                    script_id TEXT REFERENCES scripts(id)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_tasks_task_id ON tasks(task_id);
@@ -125,6 +171,7 @@ class SupabaseTaskManager:
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
                 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+                CREATE INDEX IF NOT EXISTS idx_tasks_script_id ON tasks(script_id);
                 """
 
                 # 这里需要通过Supabase的SQL编辑器手动创建表，或者使用Supabase Dashboard
@@ -133,6 +180,71 @@ class SupabaseTaskManager:
 
             except Exception as create_error:
                 print(f"创建表时出错: {create_error}")
+
+    def _validate_task_data(self, data: Dict, task_id: str = None) -> tuple[bool, Optional[str]]:
+        """
+        验证任务数据的完整性和正确性
+
+        Args:
+            data: 任务数据字典
+            task_id: 任务ID(用于日志)
+
+        Returns:
+            (is_valid, error_message): 验证是否通过和错误信息
+        """
+        task_id = task_id or data.get('task_id', 'unknown')
+
+        # 1. 检查必需字段是否存在
+        missing_fields = self.REQUIRED_FIELDS - set(data.keys())
+        if missing_fields:
+            return False, f"缺失必需字段: {', '.join(missing_fields)}"
+
+        # 2. 验证status字段的枚举值
+        status = data.get('status')
+        if status not in self.VALID_STATUSES:
+            return False, f"非法的status值: '{status}', 必须是以下之一: {', '.join(self.VALID_STATUSES)}"
+
+        # 3. 验证datetime字段格式
+        datetime_fields = ['created_at', 'last_activity', 'end_time']
+        for field in datetime_fields:
+            value = data.get(field)
+            if value is None and field in ['end_time']:  # 可选字段
+                continue
+
+            if value is None:
+                return False, f"datetime字段 '{field}' 不能为空"
+
+            # 如果是字符串,尝试解析
+            if isinstance(value, str):
+                try:
+                    datetime.fromisoformat(value)
+                except (ValueError, TypeError) as e:
+                    return False, f"datetime字段 '{field}' 格式错误: {e}"
+            elif not isinstance(value, datetime):
+                return False, f"datetime字段 '{field}' 类型错误: 期望datetime或ISO字符串, 实际为{type(value).__name__}"
+
+        # 4. 验证config字段
+        config = data.get('config')
+        if config is None:
+            return False, "config字段不能为空"
+
+        # 如果config是字符串,尝试解析为JSON
+        if isinstance(config, str):
+            try:
+                json.loads(config)
+            except json.JSONDecodeError as e:
+                return False, f"config字段JSON格式错误: {e}"
+        elif not isinstance(config, dict):
+            return False, f"config字段类型错误: 期望dict或JSON字符串, 实际为{type(config).__name__}"
+
+        # 5. 验证字符串字段非空
+        string_fields = ['task_id', 'session_id', 'user_id', 'task_description']
+        for field in string_fields:
+            value = data.get(field)
+            if not value or not isinstance(value, str) or not value.strip():
+                return False, f"字段 '{field}' 不能为空字符串"
+
+        return True, None
 
     def add_task(self, task: GlobalTask) -> bool:
         """添加任务到数据库"""
@@ -178,17 +290,16 @@ class SupabaseTaskManager:
                     update_data['start_time'] = update_data['start_time'].isoformat()
                 if 'end_time' in update_data and update_data['end_time'] and isinstance(update_data['end_time'], datetime):
                     update_data['end_time'] = update_data['end_time'].isoformat()
+                if 'last_activity' in update_data and isinstance(update_data['last_activity'], datetime):
+                    update_data['last_activity'] = update_data['last_activity'].isoformat()
 
-                # 添加更新时间
-                update_data['updated_at'] = datetime.now().isoformat()
-
-                result = self.supabase.table('tasks').update(update_data).eq('global_task_id', global_task_id).execute()
+                result = self.supabase.table('tasks').update(update_data).eq('task_id', global_task_id).execute()
 
                 if result.data:
-                    print(f"任务已更新: {global_task_id}")
+                    logger.debug(f"Task updated successfully: {global_task_id}, affected rows: {len(result.data)}")
                     return True
                 else:
-                    print(f"更新任务失败: {global_task_id}")
+                    logger.warning(f"Task update returned no data for task_id: {global_task_id}")
                     return False
 
         except Exception as e:
@@ -282,7 +393,7 @@ class SupabaseTaskManager:
                 del self.tasks[global_task_id]
 
                 # 从数据库中删除
-                result = self.supabase.table('tasks').delete().eq('global_task_id', global_task_id).execute()
+                result = self.supabase.table('tasks').delete().eq('task_id', global_task_id).execute()
 
                 if result.data:
                     print(f"任务已删除: {global_task_id}")
@@ -296,30 +407,87 @@ class SupabaseTaskManager:
             return False
 
     def load_tasks(self) -> bool:
-        """从数据库加载所有任务"""
+        """从数据库加载所有任务,弹性处理单个任务加载失败"""
+        import time
+        start_time = time.time()
+
         try:
-            print("正在从Supabase加载任务...")
+            logger.info("正在从Supabase加载任务...")
 
             # 从数据库获取所有任务
             result = self.supabase.table('tasks').select('*').order('created_at', desc=True).execute()
 
-            if result.data:
-                with self.lock:
-                    self.tasks.clear()
-                    for task_data in result.data:
+            if not result.data:
+                logger.info("数据库中没有任务")
+                return True
+
+            # 统计信息
+            total_count = len(result.data)
+            success_count = 0
+            skip_count = 0
+            skipped_tasks = []
+
+            with self.lock:
+                self.tasks.clear()
+
+                for task_data in result.data:
+                    task_id = task_data.get('task_id', 'unknown')
+
+                    try:
+                        # 1. 验证任务数据完整性
+                        is_valid, error_msg = self._validate_task_data(task_data, task_id)
+                        if not is_valid:
+                            skip_count += 1
+                            skipped_tasks.append((task_id, f"数据验证失败: {error_msg}"))
+                            logger.warning(f"跳过任务 {task_id}: 数据验证失败 - {error_msg}")
+                            continue
+
+                        # 2. 尝试加载单个任务
                         task = GlobalTask.from_dict(task_data)
                         self.tasks[task.global_task_id] = task
+                        success_count += 1
 
-                print(f"成功加载 {len(self.tasks)} 个任务")
-                return True
-            else:
-                print("数据库中没有任务")
-                return True
+                    except Exception as e:
+                        # 记录失败的任务,但继续加载其他任务
+                        skip_count += 1
+                        error_msg = str(e)
+                        skipped_tasks.append((task_id, error_msg))
+
+                        logger.warning(
+                            f"跳过任务 {task_id}: {error_msg[:100]}"
+                        )
+
+                        # 记录详细错误到debug级别
+                        logger.debug(f"任务数据: {task_data}")
+                        logger.debug(f"完整错误: {e}", exc_info=True)
+
+            # 输出加载统计
+            duration = time.time() - start_time
+            logger.info(
+                f"任务加载完成: 成功 {success_count}/{total_count}, "
+                f"跳过 {skip_count}, 耗时 {duration:.2f}秒"
+            )
+
+            # 如果有跳过的任务,输出汇总
+            if skipped_tasks:
+                logger.warning(f"以下{len(skipped_tasks)}个任务加载失败:")
+                for tid, err in skipped_tasks[:5]:  # 最多显示5个
+                    logger.warning(f"  - {tid}: {err[:80]}")
+                if len(skipped_tasks) > 5:
+                    logger.warning(f"  ... 还有{len(skipped_tasks)-5}个任务")
+
+            # 性能警告
+            if duration > 3.0:
+                logger.warning(f"⚠️  任务加载耗时过长: {duration:.2f}秒")
+
+            return True
 
         except Exception as e:
-            print(f"加载任务时出错: {e}")
+            logger.error(f"加载任务时发生严重错误: {e}", exc_info=True)
+            logger.error("应用将以空任务列表启动")
             # 如果数据库连接失败，使用空的任务列表
-            self.tasks.clear()
+            with self.lock:
+                self.tasks.clear()
             return False
 
     def save_tasks(self) -> bool:
