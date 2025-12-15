@@ -136,9 +136,13 @@ class PhoneAgent:
         agent_config: AgentConfig | None = None,
         confirmation_callback: Callable[[str], bool] | None = None,
         takeover_callback: Callable[[str], None] | None = None,
+        task_id: str | None = None,
     ):
         self.model_config = model_config or ModelConfig()
         self.agent_config = agent_config or AgentConfig()
+
+        # Store task_id if provided, otherwise will be generated in run()
+        self._task_id = task_id
 
         self.model_client = ModelClient(self.model_config)
         self.action_handler = ActionHandler(
@@ -172,8 +176,14 @@ class PhoneAgent:
         self._context = []
         self._step_count = 0
 
-        # Generate a task ID for step tracking
-        self._task_id = str(uuid.uuid4())
+        # Generate a task ID for step tracking if not already set
+        if not self._task_id:
+            self._task_id = str(uuid.uuid4())
+            if self.agent_config.verbose:
+                print(f"📝 Generated new task_id: {self._task_id}")
+        else:
+            if self.agent_config.verbose:
+                print(f"📝 Using existing task_id: {self._task_id}")
 
         # Start script recording if enabled
         if self.recorder:
@@ -186,11 +196,16 @@ class PhoneAgent:
         # Initialize step tracker if available
         if STEP_TRACKER_AVAILABLE:
             try:
+                if self.agent_config.verbose:
+                    print(f"📊 Initializing step tracker with task_id: {self._task_id}")
                 self.step_tracker = StepTracker(self._task_id)
                 if self.agent_config.verbose:
-                    print("📊 Step tracking enabled")
+                    print(f"✅ Step tracker initialized successfully with task_id: {self._task_id}")
             except Exception as e:
                 print(f"⚠️ Failed to initialize step tracker: {e}")
+                import traceback
+                if self.agent_config.verbose:
+                    traceback.print_exc()
                 self.step_tracker = None
 
         try:

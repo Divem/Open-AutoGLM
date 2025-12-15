@@ -43,12 +43,18 @@ from phone_agent.model import ModelConfig
 from phone_agent.agent import AgentConfig
 from phone_agent.recorder import ScriptRecorder
 
+# Initialize logger early
+import logging
+logger = logging.getLogger(__name__)
+
 # 导入脚本管理器
 try:
-    from supabase_manager import SupabaseTaskManager, GlobalTask
+    from web.supabase_manager import SupabaseTaskManager, GlobalTask
     SUPABASE_AVAILABLE = True
-except ImportError:
+    logger.info("✅ Supabase manager imported successfully")
+except ImportError as e:
     SUPABASE_AVAILABLE = False
+    logger.error(f"❌ Failed to import Supabase manager: {e}")
     # 回退到本地GlobalTask定义
     @dataclass
     class GlobalTask:
@@ -69,9 +75,6 @@ except ImportError:
         @property
         def global_task_id(self) -> str:
             return self.task_id
-
-# Initialize global logger
-logger = logging.getLogger(__name__)
 
 try:
     from script_manager import ScriptManager
@@ -561,6 +564,67 @@ class PhoneAgentWeb:
                 logger.error(f"Error rendering task report page: {e}")
                 return render_template('error.html', error=str(e)), 500
 
+        # Statistics API endpoints
+        @self.app.route('/api/statistics', methods=['GET'])
+        def get_statistics():
+            """Get overall statistics"""
+            try:
+                # Get days parameter (default: 30)
+                days = request.args.get('days', 30, type=int)
+
+                # Get statistics from SupabaseTaskManager
+                if hasattr(global_task_manager, 'get_statistics'):
+                    stats = global_task_manager.get_statistics()
+                    return jsonify(stats)
+                else:
+                    return jsonify({'error': 'Statistics not available'}), 503
+
+            except Exception as e:
+                logger.error(f"Error getting statistics: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @self.app.route('/api/tasks/summary', methods=['GET'])
+        def get_task_summary():
+            """Get task summary for dashboard"""
+            try:
+                # Get days parameter (default: 30)
+                days = request.args.get('days', 30, type=int)
+
+                # Try to get detailed summary first
+                if hasattr(global_task_manager, 'get_task_summary'):
+                    summary = global_task_manager.get_task_summary(days)
+                else:
+                    # Fallback to basic statistics
+                    if hasattr(global_task_manager, 'get_statistics'):
+                        stats = global_task_manager.get_statistics()
+                        summary = {
+                            'total_tasks': stats['tasks']['total'],
+                            'completed_tasks': stats['tasks']['completed'],
+                            'failed_tasks': stats['tasks']['failed'],
+                            'success_rate': 0,
+                            'daily_stats': [],
+                            'period_days': days
+                        }
+                        if stats['tasks']['total'] > 0:
+                            summary['success_rate'] = round(
+                                (stats['tasks']['completed'] / stats['tasks']['total']) * 100, 2
+                            )
+                    else:
+                        summary = {
+                            'total_tasks': 0,
+                            'completed_tasks': 0,
+                            'failed_tasks': 0,
+                            'success_rate': 0,
+                            'daily_stats': [],
+                            'period_days': days
+                        }
+
+                return jsonify(summary)
+
+            except Exception as e:
+                logger.error(f"Error getting task summary: {e}")
+                return jsonify({'error': str(e)}), 500
+
         @self.app.route('/api/tasks/<task_id>', methods=['GET'])
         def get_task(task_id):
             """Get task by ID"""
@@ -733,6 +797,7 @@ class PhoneAgentWeb:
             except Exception as e:
                 return jsonify({'error': f'Failed to fetch script summary: {str(e)}'}), 500
 
+        
     def setup_socketio(self):
         """Setup SocketIO handlers"""
 
@@ -835,7 +900,8 @@ class PhoneAgentWeb:
             # Create agent with callbacks
             agent = PhoneAgent(
                 model_config=model_config,
-                agent_config=agent_config_obj
+                agent_config=agent_config_obj,
+                task_id=task_id
             )
 
             session_data.agent = agent
@@ -864,9 +930,21 @@ class PhoneAgentWeb:
                 if global_task_info and global_task_info.status == 'stopped':
                     raise Exception("Task stopped by user")
 
+                # Verify task_id consistency
+                step_task_id = step_data.get('task_id')
+                web_task_id = task_id
+                if step_task_id and step_task_id != web_task_id:
+                    logger.warning(f"⚠️ Task ID mismatch: Web={web_task_id}, Step={step_task_id}")
+                else:
+                    logger.info(f"✅ Task ID consistent: {web_task_id}")
+
                 # Save step to database if Supabase is available
+                logger.info(f"Step callback triggered - SUPABASE_AVAILABLE: {SUPABASE_AVAILABLE}, has_save_step: {hasattr(global_task_manager, 'save_step')}")
+
                 if SUPABASE_AVAILABLE and hasattr(global_task_manager, 'save_step'):
                     try:
+                        logger.info(f"💾 Attempting to save step {step_data.get('step_number')} to database")
+
                         # Prepare step record for database
                         step_record = {
                             # 'id' will be auto-generated by database
@@ -887,9 +965,16 @@ class PhoneAgentWeb:
                         # Save step to task_steps table
                         saved_step_id = global_task_manager.save_step(step_record)
 
+                        if saved_step_id:
+                            logger.info(f"✅ Step {step_data.get('step_number')} saved successfully with ID: {saved_step_id}")
+                        else:
+                            logger.error(f"❌ Failed to save step {step_data.get('step_number')} - no ID returned")
+
                         # Save screenshot information to step_screenshots table
                         screenshot_path = step_data.get('screenshot_path')
                         if screenshot_path and os.path.exists(screenshot_path) and saved_step_id:
+                            logger.info(f"📸 Saving screenshot: {screenshot_path}")
+
                             screenshot_record = {
                                 'id': str(uuid.uuid4()),
                                 'task_id': step_data.get('task_id'),
@@ -901,14 +986,33 @@ class PhoneAgentWeb:
                                 'created_at': datetime.now().isoformat()
                             }
 
-                            global_task_manager.save_step_screenshot(screenshot_record)
+                            saved_screenshot_id = global_task_manager.save_step_screenshot(screenshot_record)
+
+                            if saved_screenshot_id:
+                                logger.info(f"✅ Screenshot saved successfully with ID: {saved_screenshot_id}")
+                            else:
+                                logger.error(f"❌ Failed to save screenshot")
+
                             if agent_config.get('verbose', False):
                                 print(f"💾 Saved step {step_data.get('step_number')} to database")
+                        elif screenshot_path:
+                            if not os.path.exists(screenshot_path):
+                                logger.warning(f"⚠️ Screenshot file not found: {screenshot_path}")
+                            else:
+                                logger.warning(f"⚠️ No step_id returned, skipping screenshot save")
 
                     except Exception as db_error:
                         # Log error but don't interrupt task execution
-                        print(f"⚠️ Failed to save step to database: {db_error}")
-                        logging.error(f"Step database save error: {db_error}")
+                        error_msg = f"⚠️ Failed to save step to database: {db_error}"
+                        print(error_msg)
+                        logger.error(f"Step database save error: {db_error}")
+                        logger.exception("Full traceback:")
+                else:
+                    logger.warning(f"⚠️ Step saving not available. SUPABASE_AVAILABLE: {SUPABASE_AVAILABLE}, has_save_step: {hasattr(global_task_manager, 'save_step') if hasattr(global_task_manager, 'save_step') else 'global_task_manager missing save_step'}")
+                    if not SUPABASE_AVAILABLE:
+                        logger.warning("Supabase is not available - check environment variables and connection")
+                    if not hasattr(global_task_manager, 'save_step'):
+                        logger.warning("global_task_manager does not have save_step method")
 
                 # Convert non-serializable objects to serializable format
                 serializable_step = {

@@ -24,6 +24,13 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
+# 加载环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # 从环境变量获取Supabase配置
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_SECRET_KEY', os.getenv('SUPABASE_SERVICE_ROLE_KEY'))
@@ -533,6 +540,16 @@ class SupabaseTaskManager:
     def save_step(self, step_data: Dict) -> Optional[str]:
         """保存单个步骤数据"""
         try:
+            # 尝试序列化数据以提前发现问题
+            import json
+            try:
+                json_str = json.dumps(step_data, default=str)
+                logger.debug(f"Step data is serializable: {len(json_str)} chars")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Step data is not serializable: {e}")
+                # 使用 default=str 强制转换
+                step_data = json.loads(json.dumps(step_data, default=str))
+
             result = self.supabase.table('task_steps').insert(step_data).execute()
 
             if result.data:
@@ -545,6 +562,9 @@ class SupabaseTaskManager:
 
         except Exception as e:
             logger.error(f"Error saving step: {e}")
+            logger.error(f"Step data type: {type(step_data)}")
+            if isinstance(step_data, dict):
+                logger.error(f"Step data keys: {list(step_data.keys())}")
             return None
 
     def save_steps_batch(self, steps_data: List[Dict]) -> bool:
@@ -709,6 +729,79 @@ class SupabaseTaskManager:
             logger.error(f"Error cleaning up old steps: {e}")
             return 0
 
+    # Statistics and reporting methods
+    def get_statistics(self, days: int = 30) -> Dict:
+        """获取任务统计信息"""
+        try:
+            from datetime import datetime, timedelta
+
+            # 计算时间范围
+            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            # 任务统计
+            total_tasks_result = self.supabase.table('tasks')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .execute()
+
+            completed_tasks_result = self.supabase.table('tasks')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .eq('status', 'completed')\
+                .execute()
+
+            failed_tasks_result = self.supabase.table('tasks')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .eq('status', 'failed')\
+                .execute()
+
+            # 步骤统计
+            steps_result = self.supabase.table('task_steps')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .execute()
+
+            successful_steps_result = self.supabase.table('task_steps')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .eq('success', True)\
+                .execute()
+
+            # 截图统计
+            screenshots_result = self.supabase.table('step_screenshots')\
+                .select('count', count='exact')\
+                .gte('created_at', start_date)\
+                .execute()
+
+            return {
+                "tasks": {
+                    "total": total_tasks_result.count or 0,
+                    "completed": completed_tasks_result.count or 0,
+                    "failed": failed_tasks_result.count or 0,
+                    "running": (total_tasks_result.count or 0) - (completed_tasks_result.count or 0) - (failed_tasks_result.count or 0)
+                },
+                "steps": {
+                    "total": steps_result.count or 0,
+                    "successful": successful_steps_result.count or 0,
+                    "failed": (steps_result.count or 0) - (successful_steps_result.count or 0)
+                },
+                "screenshots": {
+                    "total": screenshots_result.count or 0
+                },
+                "period_days": days
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting statistics: {e}")
+            return {
+                "tasks": {"total": 0, "completed": 0, "failed": 0, "running": 0},
+                "steps": {"total": 0, "successful": 0, "failed": 0},
+                "screenshots": {"total": 0},
+                "period_days": days,
+                "error": str(e)
+            }
+
   # Screenshot URL update methods
     def update_step_screenshot_url(self, step_id: str, local_path: str, remote_url: str) -> bool:
         """Update screenshot URLs for a step"""
@@ -770,6 +863,151 @@ class SupabaseTaskManager:
         except Exception as e:
             logger.error(f"Error getting screenshot with fallback: {e}")
             return None
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取任务和步骤统计信息"""
+        try:
+            statistics = {
+                'tasks': {
+                    'total': 0,
+                    'completed': 0,
+                    'failed': 0,
+                    'running': 0
+                },
+                'steps': {
+                    'total': 0,
+                    'successful': 0
+                },
+                'screenshots': {
+                    'total': 0
+                }
+            }
+
+            # 任务统计
+            try:
+                result = self.supabase.table('tasks').select('status', count='exact').execute()
+                if result.data:
+                    statistics['tasks']['total'] = result.count or 0
+
+                # 各状态任务数量
+                for status in ['completed', 'failed', 'running']:
+                    result = self.supabase.table('tasks').select('status', count='exact').eq('status', status).execute()
+                    if result.data:
+                        statistics['tasks'][status] = result.count or 0
+
+                logger.info(f"Task statistics: {statistics['tasks']}")
+
+            except Exception as e:
+                logger.error(f"Error getting task statistics: {e}")
+
+            # 步骤统计
+            try:
+                result = self.supabase.table('task_steps').select('*', count='exact').execute()
+                if result.data:
+                    statistics['steps']['total'] = result.count or 0
+
+                # 成功步骤数量
+                result = self.supabase.table('task_steps').select('*', count='exact').eq('success', True).execute()
+                if result.data:
+                    statistics['steps']['successful'] = result.count or 0
+
+                logger.info(f"Step statistics: {statistics['steps']}")
+
+            except Exception as e:
+                logger.error(f"Error getting step statistics: {e}")
+
+            # 截图统计
+            try:
+                result = self.supabase.table('step_screenshots').select('*', count='exact').execute()
+                if result.data:
+                    statistics['screenshots']['total'] = result.count or 0
+
+                logger.info(f"Screenshot statistics: {statistics['screenshots']}")
+
+            except Exception as e:
+                logger.error(f"Error getting screenshot statistics: {e}")
+
+            return statistics
+
+        except Exception as e:
+            logger.error(f"Error getting statistics: {e}")
+            return {}
+
+    def get_task_summary(self, limit: int = 10) -> Dict[str, Any]:
+        """获取任务摘要统计"""
+        try:
+            summary = {
+                'total_tasks': 0,
+                'completed_tasks': 0,
+                'running_tasks': 0,
+                'failed_tasks': 0,
+                'average_duration': 0.0,
+                'recent_tasks': []
+            }
+
+            # 基本统计
+            try:
+                result = self.supabase.table('tasks').select('*', count='exact').execute()
+                if result.data:
+                    summary['total_tasks'] = result.count or 0
+
+                # 各状态任务数量
+                for status in ['completed', 'running', 'failed']:
+                    result = self.supabase.table('tasks').select('*', count='exact').eq('status', status).execute()
+                    if result.data:
+                        summary[f'{status}_tasks'] = result.count or 0
+
+            except Exception as e:
+                logger.error(f"Error getting task counts: {e}")
+
+            # 平均执行时间
+            try:
+                result = self.supabase.table('tasks')\
+                    .select('created_at', 'end_time')\
+                    .eq('status', 'completed')\
+                    .not_.is_('end_time', 'null')\
+                    .execute()
+
+                if result.data:
+                    total_duration = 0
+                    count = 0
+                    for task in result.data:
+                        try:
+                            if task.get('created_at') and task.get('end_time'):
+                                start = datetime.fromisoformat(task['created_at'].replace('Z', '+00:00'))
+                                end = datetime.fromisoformat(task['end_time'].replace('Z', '+00:00'))
+                                duration = (end - start).total_seconds()
+                                total_duration += duration
+                                count += 1
+                        except Exception as e:
+                            logger.warning(f"Error calculating duration for task {task.get('task_id')}: {e}")
+
+                    if count > 0:
+                        summary['average_duration'] = total_duration / count
+
+            except Exception as e:
+                logger.error(f"Error calculating average duration: {e}")
+
+            # 最近任务
+            try:
+                result = self.supabase.table('tasks')\
+                    .select('*')\
+                    .order('created_at', desc=True)\
+                    .limit(limit)\
+                    .execute()
+
+                if result.data:
+                    summary['recent_tasks'] = result.data
+
+            except Exception as e:
+                logger.error(f"Error getting recent tasks: {e}")
+
+            logger.info(f"Task summary: {summary}")
+            return summary
+
+        except Exception as e:
+            logger.error(f"Error getting task summary: {e}")
+            return {}
 
 # 导出主要类
 __all__ = ['SupabaseTaskManager', 'GlobalTask']

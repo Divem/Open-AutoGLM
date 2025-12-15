@@ -27,6 +27,21 @@ except ImportError:
     SCREENSHOT_MANAGER_AVAILABLE = False
     print("Warning: Screenshot manager not available, Supabase upload disabled")
 
+# Import Supabase manager for database integration
+try:
+    # Load environment variables
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    from web.supabase_manager import SupabaseTaskManager
+    SUPABASE_MANAGER_AVAILABLE = True
+except ImportError:
+    SUPABASE_MANAGER_AVAILABLE = False
+    print("Warning: Supabase manager not available, database integration disabled")
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -103,7 +118,7 @@ class ScreenshotInfo:
 class StepTracker:
     """Tracks and manages execution steps during task execution"""
 
-    def __init__(self, task_id: str, buffer_size: int = 50, flush_interval: float = 5.0):
+    def __init__(self, task_id: str, buffer_size: int = 50, flush_interval: float = 5.0, enable_database: bool = True):
         self.task_id = task_id
         self.buffer_size = buffer_size
         self.flush_interval = flush_interval
@@ -131,6 +146,20 @@ class StepTracker:
 
         # Callbacks
         self.step_callbacks: List[Callable[[StepData], None]] = []
+
+        # Database integration
+        self.enable_database = enable_database and SUPABASE_MANAGER_AVAILABLE
+        self.db_manager = None
+
+        if self.enable_database:
+            try:
+                self.db_manager = SupabaseTaskManager()
+                logger.info("✅ StepTracker database integration enabled")
+            except Exception as e:
+                logger.warning(f"❌ Failed to initialize database manager: {e}")
+                self.enable_database = False
+        else:
+            logger.info("ℹ️ StepTracker database integration disabled")
 
         # Start flush timer
         self._start_flush_timer()
@@ -395,8 +424,11 @@ class StepTracker:
                     break
 
             if steps_to_flush:
-                # Save to database (to be implemented)
-                # For now, save to local file as backup
+                # Save to database if available
+                if self.enable_database:
+                    self._save_to_database(steps_to_flush)
+
+                # Save to local file as backup
                 self._save_to_local_file(steps_to_flush)
                 logger.info(f"Flushed {len(steps_to_flush)} steps")
 
@@ -404,6 +436,97 @@ class StepTracker:
             logger.error(f"Failed to flush buffer: {e}")
         finally:
             self.is_flushing = False
+
+    def _save_to_database(self, steps: List[StepData]):
+        """Save steps to Supabase database"""
+        if not self.db_manager or not steps:
+            return
+
+        try:
+            logger.info(f"💾 Attempting to save {len(steps)} steps to database")
+            saved_count = 0
+            screenshot_count = 0
+
+            for step in steps:
+                try:
+                    # Prepare step record for database
+                    step_record = {
+                        'task_id': self.task_id,
+                        'step_number': step.step_number,
+                        'step_type': step.step_type.value if isinstance(step.step_type, StepType) else str(step.step_type),
+                        'step_data': step.step_data,
+                        'thinking': step.thinking,
+                        'action_result': step.action_result,
+                        'screenshot_path': step.screenshot_path,
+                        'duration_ms': step.duration_ms,
+                        'success': step.success,
+                        'error_message': step.error_message,
+                        'created_at': datetime.now().isoformat()
+                    }
+
+                    # Save step to task_steps table
+                    saved_step_id = self.db_manager.save_step(step_record)
+
+                    if saved_step_id:
+                        saved_count += 1
+
+                        # Save screenshot information to step_screenshots table
+                        if step.screenshot_path:
+                            try:
+                                screenshot_info = self.screenshots.get(step.screenshot_path)
+                                if screenshot_info:
+                                    screenshot_record = {
+                                        'id': str(uuid.uuid4()),
+                                        'task_id': self.task_id,
+                                        'step_id': saved_step_id,
+                                        'screenshot_path': step.screenshot_path,
+                                        'file_size': screenshot_info.file_size,
+                                        'file_hash': screenshot_info.file_hash,
+                                        'compressed': screenshot_info.compressed,
+                                        'metadata': {
+                                            'step_number': step.step_number,
+                                            'step_type': step.step_type.value if isinstance(step.step_type, StepType) else str(step.step_type)
+                                        },
+                                        'created_at': datetime.now().isoformat()
+                                    }
+
+                                    saved_screenshot_id = self.db_manager.save_step_screenshot(screenshot_record)
+                                    if saved_screenshot_id:
+                                        screenshot_count += 1
+                                        logger.debug(f"✅ Saved screenshot: {step.screenshot_path}")
+                                    else:
+                                        logger.warning(f"⚠️ Failed to save screenshot: {step.screenshot_path}")
+                                else:
+                                    # No screenshot info available, create basic record
+                                    screenshot_record = {
+                                        'id': str(uuid.uuid4()),
+                                        'task_id': self.task_id,
+                                        'step_id': saved_step_id,
+                                        'screenshot_path': step.screenshot_path,
+                                        'file_size': None,
+                                        'file_hash': None,
+                                        'compressed': False,
+                                        'metadata': None,
+                                        'created_at': datetime.now().isoformat()
+                                    }
+
+                                    saved_screenshot_id = self.db_manager.save_step_screenshot(screenshot_record)
+                                    if saved_screenshot_id:
+                                        screenshot_count += 1
+
+                            except Exception as screenshot_error:
+                                logger.error(f"Failed to save screenshot {step.screenshot_path}: {screenshot_error}")
+                    else:
+                        logger.error(f"❌ Failed to save step {step.step_number} - no ID returned")
+
+                except Exception as step_error:
+                    logger.error(f"Failed to save step {step.step_number}: {step_error}")
+
+            logger.info(f"✅ Saved {saved_count} steps and {screenshot_count} screenshots to database")
+
+        except Exception as e:
+            logger.error(f"Failed to save steps to database: {e}")
+            logger.exception("Full traceback:")
 
     def _save_to_local_file(self, steps: List[StepData]):
         """Save steps to local file as backup"""
