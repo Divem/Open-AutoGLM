@@ -42,6 +42,7 @@ from phone_agent import PhoneAgent
 from phone_agent.model import ModelConfig
 from phone_agent.agent import AgentConfig
 from phone_agent.recorder import ScriptRecorder
+from phone_agent.stop_handler import StopException, StopReason
 
 # Initialize logger early
 import logging
@@ -271,8 +272,14 @@ class PhoneAgentWeb:
         self.app.config['UPLOAD_FOLDER'].mkdir(exist_ok=True)
         self.app.config['SCREENSHOTS_FOLDER'].mkdir(exist_ok=True)
 
-        # Initialize SocketIO
-        self.socketio = SocketIO(self.app, cors_allowed_origins="*")
+        # Initialize SocketIO with more robust configuration
+        self.socketio = SocketIO(
+            self.app,
+            cors_allowed_origins="*",
+            ping_timeout=5000,
+            ping_interval=25000,
+            engineio_logger=True
+        )
 
         # Storage
         self.sessions: Dict[str, TaskSession] = {}
@@ -317,6 +324,18 @@ class PhoneAgentWeb:
 
     def setup_routes(self):
         """Setup Flask routes"""
+
+        @self.app.after_request
+        def add_header(response):
+            """Add headers to disable caching for development"""
+            # 禁用浏览器缓存，确保使用最新的JavaScript代码
+            if 'Cache-Control' not in response.headers:
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            if 'Pragma' not in response.headers:
+                response.headers['Pragma'] = 'no-cache'
+            if 'Expires' not in response.headers:
+                response.headers['Expires'] = '0'
+            return response
 
         @self.app.route('/')
         def index():
@@ -421,32 +440,89 @@ class PhoneAgentWeb:
             """Serve uploaded files"""
             return send_from_directory(self.app.config['UPLOAD_FOLDER'], filename)
 
+        @self.app.route('/api/health', methods=['GET'])
+        def health_check():
+            """健康检查端点"""
+            try:
+                # 检查数据库连接
+                task_count = len(global_task_manager.get_all_tasks())
+
+                return jsonify({
+                    'status': 'healthy',
+                    'timestamp': datetime.now().isoformat() + 'Z',
+                    'service': 'phone-agent-web',
+                    'database': {
+                        'status': 'connected',
+                        'task_count': task_count
+                    }
+                })
+            except Exception as e:
+                logger.error(f"健康检查失败: {e}")
+                return jsonify({
+                    'status': 'unhealthy',
+                    'error': str(e),
+                    'timestamp': datetime.now().isoformat() + 'Z'
+                }), 500
+
         @self.app.route('/api/tasks', methods=['GET'])
         def get_tasks():
             """Get all tasks"""
             try:
+                logger.info(f"API请求: 获取任务列表, 参数: {dict(request.args)}")
+
                 session_id = request.args.get('session_id')
                 if session_id:
+                    logger.info(f"按会话ID过滤: {session_id}")
                     tasks = global_task_manager.get_tasks_by_session(session_id)
                 else:
+                    logger.info("获取所有任务")
                     tasks = global_task_manager.get_all_tasks()
 
-                task_list = [{
-                    'task_id': task.task_id,
-                    'session_id': task.session_id,
-                    'user_id': task.user_id,
-                    'task_description': task.task_description,
-                    'status': task.status,
-                    'start_time': task.created_at.isoformat(),  # 映射为前端期望的字段名
-                    'end_time': task.end_time.isoformat() if task.end_time else None,
-                    'last_activity': task.last_activity.isoformat(),
-                    'error_message': task.error_message,
-                    'result': task.result
-                } for task in tasks]
+                logger.info(f"获取到 {len(tasks)} 个任务")
 
-                return jsonify({'data': {'tasks': task_list}})
+                task_list = []
+                for i, task in enumerate(tasks):
+                    try:
+                        task_data = {
+                            'task_id': task.task_id,
+                            'session_id': task.session_id,
+                            'user_id': task.user_id,
+                            'task_description': task.task_description,
+                            'status': task.status,
+                            'start_time': task.created_at.isoformat() + 'Z',  # 确保UTC时间有Z后缀
+                            'end_time': task.end_time.isoformat() + 'Z' if task.end_time else None,
+                            'last_activity': task.last_activity.isoformat() + 'Z',
+                            'error_message': task.error_message,
+                            'result': task.result
+                        }
+                        task_list.append(task_data)
+
+                        if i < 3:  # 记录前3个任务详情
+                            logger.debug(f"任务样本 {i+1}: {task.task_id} - {task.status} - {task.task_description}")
+
+                    except Exception as task_error:
+                        logger.error(f"处理任务 {task.task_id} 时出错: {task_error}")
+                        # 继续处理其他任务
+                        continue
+
+                response_data = {
+                    'data': {
+                        'tasks': task_list,
+                        'total': len(task_list),
+                        'timestamp': datetime.now().isoformat() + 'Z'
+                    }
+                }
+
+                logger.info(f"成功返回 {len(task_list)} 个任务数据")
+                return jsonify(response_data)
+
             except Exception as e:
-                return jsonify({'error': f'Failed to fetch tasks: {str(e)}'}), 500
+                logger.error(f"获取任务列表失败: {e}", exc_info=True)
+                error_response = {
+                    'error': f'Failed to fetch tasks: {str(e)}',
+                    'timestamp': datetime.now().isoformat() + 'Z'
+                }
+                return jsonify(error_response), 500
 
         @self.app.route('/api/tasks/<task_id>/stop', methods=['POST'])
         def stop_task(task_id):
@@ -502,9 +578,9 @@ class PhoneAgentWeb:
                 # Calculate statistics
                 steps = report_data['steps']
                 total_steps = len(steps)
-                successful_steps = len([s for s in steps if s.get('success', True)])
+                successful_steps = len([s for s in steps if s.get('success') is True])
                 failed_steps = total_steps - successful_steps
-                total_duration = sum(s.get('duration_ms', 0) for s in steps)
+                total_duration = sum(s.get('duration_ms') or 0 for s in steps)
 
                 report = {
                     'task': report_data['task'],
@@ -797,6 +873,105 @@ class PhoneAgentWeb:
             except Exception as e:
                 return jsonify({'error': f'Failed to fetch script summary: {str(e)}'}), 500
 
+        # Screenshot fallback configuration APIs
+        @self.app.route('/api/config/screenshot-fallback', methods=['GET'])
+        def get_screenshot_fallback_config():
+            """Get screenshot fallback configuration"""
+            try:
+                from supabase_manager import LocalFileScanner
+                scanner = LocalFileScanner()
+
+                config_data = {
+                    'config': scanner.config,
+                    'performance_stats': scanner.get_performance_stats() if scanner.config['enable_performance_monitoring'] else None,
+                    'is_enabled': scanner.is_enabled()
+                }
+
+                return jsonify({'data': config_data})
+            except Exception as e:
+                return jsonify({'error': f'Failed to get screenshot fallback config: {str(e)}'}), 500
+
+        @self.app.route('/api/config/screenshot-fallback', methods=['POST'])
+        def update_screenshot_fallback_config():
+            """Update screenshot fallback configuration"""
+            try:
+                from supabase_manager import LocalFileScanner
+                scanner = LocalFileScanner()
+
+                new_config = request.json.get('config', {})
+                if not isinstance(new_config, dict):
+                    return jsonify({'error': 'Invalid config format'}), 400
+
+                # Validate configuration values
+                valid_keys = scanner.config.keys()
+                for key, value in new_config.items():
+                    if key not in valid_keys:
+                        return jsonify({'error': f'Invalid config key: {key}'}), 400
+
+                # Update configuration
+                scanner.update_config(new_config)
+
+                return jsonify({'message': 'Configuration updated successfully', 'config': scanner.config})
+            except Exception as e:
+                return jsonify({'error': f'Failed to update screenshot fallback config: {str(e)}'}), 500
+
+        @self.app.route('/api/config/screenshot-fallback/clear-cache', methods=['POST'])
+        def clear_screenshot_cache():
+            """Clear screenshot scan cache"""
+            try:
+                from supabase_manager import LocalFileScanner
+                scanner = LocalFileScanner()
+                scanner.clear_cache()
+
+                return jsonify({'message': 'Screenshot cache cleared successfully'})
+            except Exception as e:
+                return jsonify({'error': f'Failed to clear screenshot cache: {str(e)}'}), 500
+
+        @self.app.route('/api/config/screenshot-fallback/test', methods=['POST'])
+        def test_screenshot_fallback():
+            """Test screenshot fallback functionality"""
+            try:
+                from supabase_manager import LocalFileScanner, SupabaseManager
+                import time
+
+                test_start_time = time.time()
+                scanner = LocalFileScanner()
+
+                # Test if scanner is enabled
+                if not scanner.is_enabled():
+                    return jsonify({
+                        'success': False,
+                        'message': 'Screenshot fallback is disabled',
+                        'config': scanner.config
+                    })
+
+                # Test file scanning
+                local_files = scanner.scan_screenshots()
+                scan_time = time.time() - test_start_time
+
+                # Get performance stats
+                perf_stats = scanner.get_performance_stats()
+
+                test_result = {
+                    'success': True,
+                    'message': 'Screenshot fallback test completed',
+                    'config': scanner.config,
+                    'scan_results': {
+                        'files_found': len(local_files),
+                        'scan_time': scan_time,
+                        'first_file': local_files[0].name if local_files else None
+                    },
+                    'performance_stats': perf_stats,
+                    'cache_info': {
+                        'cache_valid': perf_stats.get('cache_valid', False),
+                        'cached_files': perf_stats.get('cached_files_count', 0)
+                    }
+                }
+
+                return jsonify({'data': test_result})
+            except Exception as e:
+                return jsonify({'error': f'Screenshot fallback test failed: {str(e)}'}), 500
+
         
     def setup_socketio(self):
         """Setup SocketIO handlers"""
@@ -849,7 +1024,29 @@ class PhoneAgentWeb:
 
             if session_id in self.sessions:
                 session_data = self.sessions[session_id]
+
+                # Update session status
                 session_data.task_status = 'stopped'
+
+                # Stop the agent directly if available
+                if hasattr(session_data, 'agent') and session_data.agent:
+                    try:
+                        logger.info(f"🛑 Stopping agent for session {session_id}")
+                        session_data.agent.stop(
+                            reason="User requested stop",
+                            message="Task stopped by user via web interface"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error stopping agent: {e}")
+                        import traceback
+                        traceback.print_exc()
+
+                # Update database task status if task_id exists
+                if hasattr(session_data, 'task_id') and session_data.task_id:
+                    try:
+                        global_task_manager.update_task_status(session_data.task_id, 'stopped')
+                    except Exception as e:
+                        logger.error(f"Error updating task status in database: {e}")
 
                 emit('task_stopped', {
                     'session_id': session_id,
@@ -1068,6 +1265,46 @@ class PhoneAgentWeb:
                 'result': str(result),
                 'task_id': task_id,
                 'script_id': script_id,  # Include script_id in response
+                'timestamp': datetime.now().isoformat()
+            }, room=session_id)
+
+        except StopException as e:
+            # Task was stopped by user
+            logger.info(f"🛑 Task {task_id} stopped: {e}")
+
+            # Save script to database if recording was enabled
+            script_id = None
+            if agent_config.get('record_script', False) and hasattr(agent, 'recorder') and agent.recorder:
+                try:
+                    # Finish recording and save to database
+                    agent.recorder.stop()  # Stop recording
+                    script_id = agent.recorder.save_to_database_and_file()
+
+                    # Update global task with script_id
+                    if script_id:
+                        global_task_manager.update_task(task_id, script_id=script_id)
+                        print(f"Task {task_id} script saved with ID: {script_id}")
+                except Exception as script_error:
+                    print(f"Failed to save script to database: {script_error}")
+
+            # Update session and global task status
+            session_data.task_status = 'stopped'
+            session_data.last_activity = datetime.now()
+            global_task_manager.update_task_status(task_id, 'stopped', result=str(e))
+
+            # Add result to conversation
+            session_data.conversation_history.append({
+                'role': 'assistant',
+                'content': str(e),
+                'timestamp': datetime.now().isoformat()
+            })
+
+            # Notify stop completion
+            self.socketio.emit('task_stopped', {
+                'session_id': session_id,
+                'result': str(e),
+                'task_id': task_id,
+                'script_id': script_id,
                 'timestamp': datetime.now().isoformat()
             }, room=session_id)
 

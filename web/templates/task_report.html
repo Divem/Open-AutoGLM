@@ -78,6 +78,89 @@
             font-style: italic;
             margin: 10px 0;
         }
+        /* TAB导航样式 */
+        .nav-tabs .nav-link {
+            font-weight: 500;
+            color: #6c757d;
+            border: none;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+        .nav-tabs .nav-link:hover {
+            border-bottom-color: #dee2e6;
+            color: #495057;
+        }
+        .nav-tabs .nav-link.active {
+            color: #0d6efd;
+            background-color: transparent;
+            border: none;
+            border-bottom: 3px solid #0d6efd;
+        }
+        .nav-tabs .nav-link .badge {
+            font-size: 0.65em;
+            vertical-align: middle;
+        }
+
+        /* TAB面板样式 */
+        .tab-pane {
+            /* 设置固定高度，确保可滚动 */
+            height: calc(100vh - 350px); /* 动态计算高度，减去header等元素的高度 */
+            max-height: 800px; /* 最大高度限制 */
+            overflow-y: auto; /* 启用垂直滚动 */
+            overflow-x: hidden; /* 隐藏水平滚动 */
+
+            /* 优化滚动体验 */
+            scroll-behavior: smooth;
+            padding-top: 20px;
+            padding-right: 15px; /* 为滚动条留出空间 */
+        }
+
+        /* 回到顶部按钮样式 */
+        .back-to-top {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .back-to-top.show {
+            opacity: 1;
+            visibility: visible;
+        }
+        .back-to-top:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+        }
+
+        /* 截图网格优化 */
+        #screenshots-grid .card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        #screenshots-grid .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        }
+
+        /* 加载状态指示器 */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: #0d6efd;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
         @media (max-width: 768px) {
             .timeline::before {
                 left: 30px;
@@ -89,11 +172,51 @@
             .timeline-dot {
                 left: 30px;
             }
+
+            /* 移动端回到顶部按钮调整 */
+            .back-to-top {
+                bottom: 20px;
+                right: 20px;
+                width: 45px;
+                height: 45px;
+            }
+
+            /* 移动端TAB导航调整 */
+            .nav-tabs .nav-link {
+                font-size: 0.9rem;
+                padding: 0.5rem 0.75rem;
+            }
+
+            /* 移动端TAB面板调整 */
+            .tab-pane {
+                height: calc(100vh - 300px);
+                max-height: 600px;
+                padding-right: 10px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container mt-4">
+        <!-- 导航面包屑 -->
+        <nav aria-label="breadcrumb" class="mb-3">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item">
+                    <a href="/" aria-label="返回主页">
+                        <i class="bi bi-house"></i> 首页
+                    </a>
+                </li>
+                <li class="breadcrumb-item">
+                    <a href="/" aria-label="返回任务管理">
+                        <i class="bi bi-list"></i> 任务管理
+                    </a>
+                </li>
+                <li class="breadcrumb-item active" aria-current="page">
+                    <i class="bi bi-file-text"></i> 任务报告
+                </li>
+            </ol>
+        </nav>
+
         <!-- 任务信息 -->
         <div class="row mb-4">
             <div class="col-12">
@@ -107,8 +230,13 @@
                             <button class="btn btn-outline-primary btn-sm me-2" onclick="exportReport('pdf')">
                                 <i class="bi bi-file-pdf me-1"></i>导出 PDF
                             </button>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="window.history.back()">
-                                <i class="bi bi-arrow-left me-1"></i>返回
+                            <button class="btn btn-outline-secondary btn-sm"
+                                id="backButton"
+                                onclick="smartGoBack()"
+                                aria-label="返回上一页"
+                                title="返回上一页 (ESC)">
+                                <i class="bi bi-arrow-left me-1" id="backIcon" aria-hidden="true"></i>
+                                <span id="backText">返回</span>
                             </button>
                         </div>
                     </div>
@@ -175,44 +303,54 @@
             </div>
         </div>
 
-        <!-- 执行时间线 -->
+        <!-- TAB导航：执行详情 -->
         <div class="row">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="bi bi-clock-history me-2"></i>
-                            执行时间线
-                        </h5>
+                        <!-- TAB导航 -->
+                        <ul class="nav nav-tabs card-header-tabs" id="detailsTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="timeline-tab" data-bs-toggle="tab" data-bs-target="#timeline-pane" type="button" role="tab" aria-controls="timeline-pane" aria-selected="true">
+                                    <i class="bi bi-clock-history me-2"></i>
+                                    执行时间线
+                                    <span class="badge bg-secondary ms-1" id="timeline-count">0</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="screenshots-tab" data-bs-toggle="tab" data-bs-target="#screenshots-pane" type="button" role="tab" aria-controls="screenshots-pane" aria-selected="false">
+                                    <i class="bi bi-images me-2"></i>
+                                    执行截图
+                                    <span class="badge bg-secondary ms-1" id="screenshot-count">0</span>
+                                </button>
+                            </li>
+                        </ul>
                     </div>
                     <div class="card-body">
-                        <div class="timeline" id="timeline">
-                            <!-- 步骤将通过 JavaScript 动态加载 -->
+                        <!-- TAB内容 -->
+                        <div class="tab-content" id="detailsTabContent">
+                            <!-- 执行时间线TAB页 -->
+                            <div class="tab-pane fade show active" id="timeline-pane" role="tabpanel" aria-labelledby="timeline-tab">
+                                <div class="timeline" id="timeline">
+                                    <!-- 步骤将通过 JavaScript 动态加载 -->
+                                </div>
+                            </div>
+                            <!-- 执行截图TAB页 -->
+                            <div class="tab-pane fade" id="screenshots-pane" role="tabpanel" aria-labelledby="screenshots-tab">
+                                <div class="row" id="screenshots-grid">
+                                    <!-- 截图将通过 JavaScript 动态加载 -->
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 截图展示 -->
-        <div class="row mt-4" id="screenshots-section">
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">
-                            <i class="bi bi-images me-2"></i>
-                            执行截图
-                            <span class="badge bg-secondary ms-2" id="screenshot-count">0</span>
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row" id="screenshots-grid">
-                            <!-- 截图将通过 JavaScript 动态加载 -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- 回到顶部按钮 -->
+        <button id="backToTop" class="btn btn-primary back-to-top" onclick="scrollToTop()">
+            <i class="bi bi-arrow-up"></i>
+        </button>
     </div>
 
     <!-- 截图模态框 -->
@@ -240,28 +378,444 @@
     <script>
         const taskId = '{{ task.task_id }}';
         let reportData = null;
+        let currentTab = 'timeline';
+        let scrollPosition = { timeline: 0, screenshots: 0 };
+
+        // 智能返回函数
+        function smartGoBack() {
+            try {
+                console.log('[智能导航] 开始智能返回检测');
+
+                // 1. 检查是否有历史记录
+                if (window.history.length > 1) {
+                    console.log('[智能导航] 使用浏览器历史记录返回');
+                    window.history.back();
+                    return;
+                }
+
+                // 2. 检查来源页面是否有效
+                const referrer = document.referrer;
+                if (referrer &&
+                    referrer !== window.location.href &&
+                    referrer.includes(window.location.hostname)) {
+                    console.log('[智能导航] 返回到来源页面:', referrer);
+                    window.location.href = referrer;
+                    return;
+                }
+
+                // 3. 默认返回主页
+                console.log('[智能导航] 返回主页');
+                window.location.href = '/';
+
+            } catch (error) {
+                console.error('[智能导航] 返回失败:', error);
+                // 最后的备用方案
+                window.location.href = '/';
+            }
+        }
+
+        // 页面加载时预检测返回方式
+        function preDetectNavigation() {
+            const backButton = document.getElementById('backButton');
+            const backText = document.getElementById('backText');
+
+            if (backButton && backText) {
+                if (window.history.length <= 1) {
+                    // 没有历史记录，修改按钮文本
+                    backText.textContent = '返回主页';
+                    backButton.title = '返回主页 (ESC)';
+                }
+            }
+        }
+
+        // 初始化键盘快捷键
+        function initializeKeyboardShortcuts() {
+            document.addEventListener('keydown', function(e) {
+                // ESC键返回
+                if (e.key === 'Escape') {
+                    smartGoBack();
+                    return;
+                }
+
+                // Alt+Left Arrow 返回
+                if (e.altKey && e.key === 'ArrowLeft') {
+                    smartGoBack();
+                    return;
+                }
+            });
+
+            console.log('[键盘快捷键] 已初始化: ESC, Alt+Left');
+        }
+
+        // 初始化移动端触摸手势
+        function initializeTouchGestures() {
+            let touchStartX = 0;
+            let touchStartY = 0;
+
+            document.addEventListener('touchstart', function(e) {
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+            }, { passive: true });
+
+            document.addEventListener('touchend', function(e) {
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+
+                // 计算滑动距离
+                const deltaX = touchEndX - touchStartX;
+                const deltaY = Math.abs(touchEndY - touchStartY);
+
+                // 检测右滑手势（向右滑动超过100px，垂直滑动小于50px）
+                if (deltaX > 100 && deltaY < 50) {
+                    console.log('[触摸手势] 检测到右滑手势，触发返回');
+                    smartGoBack();
+                }
+            }, { passive: true });
+
+            console.log('[触摸手势] 已初始化右滑返回');
+        }
 
         // 页面加载完成后获取报告数据
         document.addEventListener('DOMContentLoaded', function() {
-            loadTaskReport();
+            initializePage();
         });
+
+        // 初始化页面
+        async function initializePage() {
+            // 预检测导航返回方式
+            preDetectNavigation();
+            // 初始化键盘快捷键
+            initializeKeyboardShortcuts();
+            // 初始化移动端触摸手势
+            initializeTouchGestures();
+            // 初始化TAB事件监听
+            initializeTabs();
+            // 初始化回到顶部按钮
+            initializeBackToTop();
+            // 加载任务数据
+            await loadTaskReport();
+        }
+
+        // 初始化TAB功能
+        function initializeTabs() {
+            try {
+                const tabButtons = document.querySelectorAll('#detailsTab button[data-bs-toggle="tab"]');
+
+                if (tabButtons.length === 0) {
+                    console.warn('No tab buttons found');
+                    return;
+                }
+
+                tabButtons.forEach(button => {
+                    // 使用多种事件监听以确保兼容性
+                    button.addEventListener('shown.bs.tab', handleTabSwitch);
+                    button.addEventListener('click', function(e) {
+                        // 降级处理：如果Bootstrap事件不可用，使用click事件
+                        setTimeout(() => handleTabSwitch.call(this, e), 50);
+                    });
+                });
+            } catch (error) {
+                console.warn('Error initializing tabs:', error);
+            }
+        }
+
+        // 处理TAB切换
+        function handleTabSwitch(e) {
+            try {
+                // 保存当前TAB的滚动位置
+                if (currentTab === 'timeline') {
+                    const timelinePane = document.querySelector('#timeline-pane');
+                    if (timelinePane) {
+                        scrollPosition.timeline = timelinePane.scrollTop || 0;
+                    }
+                } else if (currentTab === 'screenshots') {
+                    const screenshotsPane = document.querySelector('#screenshots-pane');
+                    if (screenshotsPane) {
+                        scrollPosition.screenshots = screenshotsPane.scrollTop || 0;
+                    }
+                }
+
+                // 更新当前TAB
+                currentTab = e.target.id.includes('timeline') ? 'timeline' : 'screenshots';
+
+                // 延迟加载非活跃TAB内容
+                if (currentTab === 'screenshots') {
+                    const screenshotsGrid = document.querySelector('#screenshots-grid');
+                    if (screenshotsGrid && !screenshotsGrid.hasChildNodes()) {
+                        displayScreenshots();
+                    }
+                }
+
+                // 更新回到顶部按钮状态
+                setTimeout(updateBackToTopButtonState, 100);
+            } catch (error) {
+                console.warn('Error handling tab switch:', error);
+            }
+        }
+
+        // 更新回到顶部按钮状态
+        function updateBackToTopButtonState() {
+            const backToTopBtn = document.getElementById('backToTop');
+            if (!backToTopBtn) return;
+
+            const activePane = document.querySelector('.tab-pane.active');
+            if (activePane && activePane.scrollTop > 200) {
+                backToTopBtn.classList.add('show');
+            } else {
+                backToTopBtn.classList.remove('show');
+            }
+        }
+
+        // 初始化回到顶部按钮
+        function initializeBackToTop() {
+            const backToTopBtn = document.getElementById('backToTop');
+
+            if (!backToTopBtn) {
+                console.warn('Back to top button not found');
+                return;
+            }
+
+            // 创建Intersection Observer来优化性能
+            const observerOptions = {
+                root: null, // 相对于viewport
+                threshold: 0.1, // 10%可见时触发
+                rootMargin: '-200px 0px 0px 0px' // 顶部200px内不可见时显示按钮
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    // 当目标元素不可见时显示按钮
+                    if (!entry.isIntersecting) {
+                        backToTopBtn.classList.add('show');
+                    } else {
+                        backToTopBtn.classList.remove('show');
+                    }
+                });
+            }, observerOptions);
+
+            // 为每个TAB面板创建观察目标
+            const setupTabObserver = (tabPane) => {
+                // 创建一个顶部的sentinel元素
+                let sentinel = tabPane.querySelector('.scroll-sentinel');
+                if (!sentinel) {
+                    sentinel = document.createElement('div');
+                    sentinel.className = 'scroll-sentinel';
+                    sentinel.style.cssText = 'position: absolute; top: 0; left: 0; height: 1px; width: 1px; pointer-events: none;';
+                    tabPane.style.position = 'relative';
+                    tabPane.insertBefore(sentinel, tabPane.firstChild);
+                }
+                observer.observe(sentinel);
+
+                // 监听TAB面板自身的滚动
+                tabPane.addEventListener('scroll', function() {
+                    // 使用requestAnimationFrame优化性能
+                    requestAnimationFrame(() => {
+                        if (this.scrollTop > 200) {
+                            backToTopBtn.classList.add('show');
+                        } else {
+                            backToTopBtn.classList.remove('show');
+                        }
+                    });
+                }, { passive: true });
+            };
+
+            // 为所有TAB面板设置观察器
+            const tabPanes = document.querySelectorAll('.tab-pane');
+            tabPanes.forEach(setupTabObserver);
+
+            // 监听窗口滚动（针对整个页面的滚动）
+            window.addEventListener('scroll', function() {
+                requestAnimationFrame(() => {
+                    const scrollY = window.pageYOffset || document.documentElement.scrollTop;
+                    if (scrollY > 200) {
+                        backToTopBtn.classList.add('show');
+                    } else {
+                        // 检查当前激活的TAB面板
+                        const activePane = document.querySelector('.tab-pane.active');
+                        if (!activePane || activePane.scrollTop <= 200) {
+                            backToTopBtn.classList.remove('show');
+                        }
+                    }
+                });
+            }, { passive: true });
+
+            // 清理函数
+            return () => {
+                observer.disconnect();
+            };
+        }
+
+        // 优化的节流函数
+        function throttle(func, limit) {
+            let inThrottle;
+            let lastFunc;
+            let lastRan;
+
+            return function() {
+                const context = this;
+                const args = arguments;
+
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    lastRan = Date.now();
+                    inThrottle = true;
+                } else {
+                    clearTimeout(lastFunc);
+                    lastFunc = setTimeout(function() {
+                        if ((Date.now() - lastRan) >= limit) {
+                            func.apply(context, args);
+                            lastRan = Date.now();
+                        }
+                    }, limit - (Date.now() - lastRan));
+                }
+            }
+        }
+
+        // 回到顶部功能
+        function scrollToTop() {
+            try {
+                const activePane = document.querySelector('.tab-pane.active');
+
+                if (activePane) {
+                    // 首先滚动TAB面板到顶部
+                    if (activePane.scrollTo) {
+                        activePane.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                        });
+                    } else {
+                        activePane.scrollTop = 0;
+                    }
+
+                    // 如果页面也有滚动，也滚动页面
+                    const windowScrollY = window.pageYOffset || document.documentElement.scrollTop;
+                    if (windowScrollY > 0) {
+                        setTimeout(() => {
+                            if (window.scrollTo) {
+                                window.scrollTo({
+                                    top: 0,
+                                    behavior: 'smooth'
+                                });
+                            } else {
+                                document.documentElement.scrollTop = 0;
+                                document.body.scrollTop = 0;
+                            }
+                        }, 100); // 轻微延迟，让TAB动画更流畅
+                    }
+                } else {
+                    // 如果没有激活的TAB，只滚动页面
+                    if (window.scrollTo) {
+                        window.scrollTo({
+                            top: 0,
+                            behavior: 'smooth'
+                        });
+                    } else {
+                        document.documentElement.scrollTop = 0;
+                        document.body.scrollTop = 0;
+                    }
+                }
+            } catch (error) {
+                console.warn('Scroll to top failed, using fallback:', error);
+                // 最基本的降级方案
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+            }
+        }
 
         // 加载任务报告
         async function loadTaskReport() {
             try {
+                console.log(`[DataLoading] 开始加载任务报告: ${taskId}`);
+
                 const response = await fetch(`/api/tasks/${taskId}/report`);
                 const result = await response.json();
 
+                console.log(`[DataLoading] API响应状态: ${response.status}`);
+                console.log(`[DataLoading] API响应数据:`, result);
+
                 if (response.ok) {
                     reportData = result.data;
+
+                    // 详细验证数据结构
+                    validateReportData(reportData);
+
                     displayStatistics();
                     displayTimeline();
-                    displayScreenshots();
+
+                    // 截图延迟到TAB激活时加载
+                    if (currentTab === 'screenshots') {
+                        displayScreenshots();
+                    }
                 } else {
+                    console.error(`[DataLoading] API错误: ${result.error}`);
                     showError('加载报告失败: ' + result.error);
                 }
             } catch (error) {
+                console.error(`[DataLoading] 网络错误:`, error);
                 showError('网络错误: ' + error.message);
+            }
+        }
+
+        // 验证报告数据结构
+        function validateReportData(data) {
+            console.log(`[DataValidation] 开始验证报告数据结构`);
+
+            if (!data) {
+                console.error(`[DataValidation] 数据为空`);
+                return;
+            }
+
+            console.log(`[DataValidation] 数据概览:`, {
+                hasTask: !!data.task,
+                hasSteps: !!data.steps,
+                stepsCount: data.steps?.length || 0,
+                hasScreenshots: !!data.screenshots,
+                screenshotsCount: data.screenshots?.length || 0
+            });
+
+            // 检查任务信息
+            if (data.task) {
+                console.log(`[DataValidation] 任务信息:`, data.task);
+            }
+
+            // 检查步骤数据
+            if (data.steps && Array.isArray(data.steps)) {
+                console.log(`[DataValidation] 步骤数量: ${data.steps.length}`);
+
+                const stepsWithScreenshots = data.steps.filter(step =>
+                    step.screenshot_path || step.screenshot_url
+                );
+
+                console.log(`[DataValidation] 包含截图的步骤: ${stepsWithScreenshots.length}`);
+
+                stepsWithScreenshots.forEach((step, index) => {
+                    console.log(`[DataValidation] 步骤${index + 1}:`, {
+                        step_number: step.step_number,
+                        step_type: step.step_type || step.action,
+                        has_screenshot_path: !!step.screenshot_path,
+                        has_screenshot_url: !!step.screenshot_url,
+                        screenshot_path: step.screenshot_path,
+                        screenshot_url: step.screenshot_url,
+                        created_at: step.created_at
+                    });
+                });
+            }
+
+            // 检查截图数据
+            if (data.screenshots && Array.isArray(data.screenshots)) {
+                console.log(`[DataValidation] 独立截图数量: ${data.screenshots.length}`);
+
+                data.screenshots.forEach((screenshot, index) => {
+                    console.log(`[DataValidation] 截图${index + 1}:`, {
+                        has_path: !!screenshot.screenshot_path,
+                        has_url: !!screenshot.screenshot_url,
+                        path: screenshot.screenshot_path,
+                        url: screenshot.screenshot_url,
+                        source: screenshot.source,
+                        step_number: screenshot.step_number,
+                        created_at: screenshot.created_at
+                    });
+                });
             }
         }
 
@@ -272,6 +826,9 @@
             document.getElementById('successful-steps').textContent = stats.successful_steps;
             document.getElementById('failed-steps').textContent = stats.failed_steps;
             document.getElementById('success-rate').textContent = (stats.success_rate * 100).toFixed(1) + '%';
+
+            // 更新TAB中的计数
+            document.getElementById('timeline-count').textContent = stats.total_steps;
             document.getElementById('screenshot-count').textContent = stats.screenshots_count;
         }
 
@@ -279,6 +836,17 @@
         function displayTimeline() {
             const timeline = document.getElementById('timeline');
             const steps = reportData.steps || [];
+
+            // 显示加载状态
+            if (steps.length === 0) {
+                timeline.innerHTML = `
+                    <div class="text-center py-4">
+                        <i class="bi bi-info-circle text-muted"></i>
+                        <p class="text-muted mt-2">暂无执行步骤</p>
+                    </div>
+                `;
+                return;
+            }
 
             steps.forEach((step, index) => {
                 const timelineItem = createTimelineItem(step, index);
@@ -378,51 +946,363 @@
         }
 
         // 显示截图
-        function displayScreenshots() {
+        async function displayScreenshots() {
             const grid = document.getElementById('screenshots-grid');
-            const screenshots = reportData.screenshots || [];
 
-            screenshots.forEach((screenshot, index) => {
-                const col = document.createElement('div');
-                col.className = 'col-md-3 mb-3';
+            console.log('[Screenshot] 开始加载截图数据');
 
-                const card = document.createElement('div');
-                card.className = 'card';
+            try {
+                // 显示加载状态
+                showLoadingState(grid);
+                console.log('[Screenshot] 显示加载状态');
 
-                const img = document.createElement('img');
-                img.src = `/screenshots/${screenshot.screenshot_path.split('/').pop()}`;
-                img.className = 'card-img-top screenshot-preview';
-                img.style.height = '150px';
-                img.style.objectFit = 'cover';
-                img.onclick = () => showScreenshot(screenshot.screenshot_path);
-                img.alt = `截图 ${index + 1}`;
+                // 确保reportData已加载
+                if (!reportData) {
+                    console.log('[Screenshot] reportData为空，开始加载...');
+                    await loadTaskReport();
+                    console.log('[Screenshot] reportData加载完成');
+                }
 
-                const cardBody = document.createElement('div');
-                cardBody.className = 'card-body p-2';
-                cardBody.innerHTML = `
-                    <small class="text-muted d-block">
-                        <i class="bi bi-clock me-1"></i>
-                        ${new Date(screenshot.created_at).toLocaleString()}
-                    </small>
-                    ${screenshot.file_size ? `<small class="text-muted">大小: ${(screenshot.file_size / 1024).toFixed(1)}KB</small>` : ''}
-                `;
+                // 验证数据结构
+                if (!reportData || typeof reportData !== 'object') {
+                    throw new Error('报告数据无效或未正确加载');
+                }
 
-                card.appendChild(img);
-                card.appendChild(cardBody);
-                col.appendChild(card);
-                grid.appendChild(col);
+                console.log('[Screenshot] reportData已加载:', {
+                    hasScreenshots: !!reportData.screenshots,
+                    screenshotsCount: reportData.screenshots?.length || 0,
+                    hasSteps: !!reportData.steps,
+                    stepsCount: reportData.steps?.length || 0
+                });
+
+                // 提取和处理截图数据
+                const screenshots = extractScreenshots(reportData);
+
+                if (screenshots.length === 0) {
+                    console.log('[Screenshot] 没有找到截图数据');
+                    showNoScreenshotsState(grid);
+                    return;
+                }
+
+                console.log(`[Screenshot] 找到 ${screenshots.length} 张截图，开始渲染`);
+
+                // 渲染截图
+                await renderScreenshots(grid, screenshots);
+
+                console.log(`[Screenshot] 成功加载 ${screenshots.length} 张截图`);
+
+            } catch (error) {
+                console.error('[Screenshot] 加载失败:', error);
+                showErrorState(grid, error);
+            }
+        }
+
+        // 显示加载状态
+        function showLoadingState(grid) {
+            grid.innerHTML = `
+                <div class="col-12 text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="text-muted mt-2">加载截图中...</p>
+                    <small class="text-muted">请稍候，正在获取截图数据</small>
+                </div>
+            `;
+        }
+
+        // 显示无截图状态
+        function showNoScreenshotsState(grid) {
+            grid.innerHTML = `
+                <div class="col-12 text-center py-4">
+                    <i class="bi bi-images text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-2">暂无执行截图</p>
+                    <small class="text-muted">任务执行过程中可能没有生成截图</small>
+                </div>
+            `;
+        }
+
+        // 显示错误状态
+        function showErrorState(grid, error) {
+            grid.innerHTML = `
+                <div class="col-12 text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
+                    <p class="text-danger mt-2">截图加载失败</p>
+                    <small class="text-muted">${error.message || '未知错误'}</small>
+                    <button class="btn btn-sm btn-outline-primary mt-2" onclick="displayScreenshots()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>重试
+                    </button>
+                </div>
+            `;
+        }
+
+        // 提取截图数据
+        function extractScreenshots(reportData) {
+            console.log('[Screenshot] 开始提取截图数据');
+
+            // 1. 尝试获取独立的截图数据
+            let screenshots = reportData.screenshots || [];
+            console.log(`[Screenshot] 独立截图数据: ${screenshots.length} 条`);
+
+            // 2. 如果没有，从步骤中提取
+            if (screenshots.length === 0 && reportData.steps) {
+                console.log(`[Screenshot] 从 ${reportData.steps.length} 个步骤中提取截图`);
+                screenshots = [];
+
+                reportData.steps.forEach((step, index) => {
+                    if (step.screenshot_path || step.screenshot_url) {
+                        const screenshot = {
+                            screenshot_path: step.screenshot_path,
+                            screenshot_url: step.screenshot_url,
+                            created_at: step.created_at || new Date().toISOString(),
+                            step_number: step.step_number || index + 1,
+                            step_type: step.step_type || 'unknown',
+                            step_description: step.description || step.action || ''
+                        };
+                        screenshots.push(screenshot);
+                        console.log(`[Screenshot] 提取截图: 步骤${screenshot.step_number}, 路径: ${screenshot.screenshot_path || screenshot.screenshot_url}`);
+                    }
+                });
+            }
+
+            console.log(`[Screenshot] 总共提取到 ${screenshots.length} 张截图`);
+            return screenshots;
+        }
+
+        // 渲染截图
+        async function renderScreenshots(grid, screenshots) {
+            console.log(`[Screenshot] 开始渲染 ${screenshots.length} 张截图`);
+
+            // 清空当前内容
+            grid.innerHTML = '';
+
+            // 使用DocumentFragment提高性能
+            const fragment = document.createDocumentFragment();
+
+            // 批量创建截图元素
+            for (let i = 0; i < screenshots.length; i++) {
+                try {
+                    const screenshotElement = await createScreenshotElement(screenshots[i], i);
+                    fragment.appendChild(screenshotElement);
+                } catch (error) {
+                    console.error(`[Screenshot] 创建截图元素失败 (${i}):`, error);
+                    // 创建错误占位符
+                    const errorElement = createErrorPlaceholder(i);
+                    fragment.appendChild(errorElement);
+                }
+            }
+
+            // 一次性添加到DOM
+            grid.appendChild(fragment);
+
+            // 延迟加载图片
+            setTimeout(() => {
+                lazyLoadImages();
+            }, 100);
+
+            console.log('[Screenshot] 截图渲染完成');
+        }
+
+        // 创建截图元素
+        async function createScreenshotElement(screenshot, index) {
+            const col = document.createElement('div');
+            col.className = 'col-md-3 col-sm-4 col-6 mb-3';
+
+            const card = document.createElement('div');
+            card.className = 'card h-100';
+
+            const img = document.createElement('img');
+
+            // 计算图片源URL
+            const screenshotSrc = calculateScreenshotUrl(screenshot);
+
+            // 设置图片属性
+            img.dataset.src = screenshotSrc;
+            img.className = 'card-img-top screenshot-preview';
+            img.style.height = '150px';
+            img.style.objectFit = 'cover';
+            img.alt = `截图 ${index + 1}`;
+            img.loading = 'lazy';
+
+            // 添加错误处理
+            img.onerror = function() {
+                console.warn(`[Screenshot] 图片加载失败: ${screenshotSrc}`);
+                this.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+5Zu+54mH5ZCR5peg5rW355qE5L2c56iL5L2c56iL5bqm5Y2w5py6PC90ZXh0Pjwvc3ZnPg==';
+                this.style.objectFit = 'contain';
+            };
+
+            // 添加点击事件
+            img.onclick = () => showScreenshot(screenshot.screenshot_path || screenshot.screenshot_url);
+
+            const cardBody = document.createElement('div');
+            cardBody.className = 'card-body p-2';
+
+            // 构建信息内容
+            const infoHtml = buildScreenshotInfo(screenshot);
+            cardBody.innerHTML = infoHtml;
+
+            // 组装元素
+            card.appendChild(img);
+            card.appendChild(cardBody);
+            col.appendChild(card);
+
+            return col;
+        }
+
+        // 计算截图URL
+        function calculateScreenshotUrl(screenshot) {
+            // 1. 优先使用完整URL
+            if (screenshot.screenshot_url) {
+                console.log(`[Screenshot] 使用URL: ${screenshot.screenshot_url}`);
+                return screenshot.screenshot_url;
+            }
+
+            // 2. 处理本地路径
+            if (screenshot.screenshot_path) {
+                const path = screenshot.screenshot_path;
+
+                // 如果是完整路径，提取文件名
+                if (path.includes('/')) {
+                    const filename = path.split('/').pop();
+                    const url = `/screenshots/${filename}`;
+                    console.log(`[Screenshot] 使用本地路径: ${url}`);
+                    return url;
+                }
+
+                // 如果是相对路径，直接使用
+                const url = `/screenshots/${path}`;
+                console.log(`[Screenshot] 使用相对路径: ${url}`);
+                return url;
+            }
+
+            console.warn('[Screenshot] 无法计算截图URL:', screenshot);
+            return '';
+        }
+
+        // 构建截图信息
+        function buildScreenshotInfo(screenshot) {
+            let infoHtml = '';
+
+            if (screenshot.step_number) {
+                infoHtml += `<small class="text-muted d-block">
+                    <i class="bi bi-list-ol me-1"></i>
+                    步骤 ${screenshot.step_number}
+                </small>`;
+            }
+
+            if (screenshot.step_type) {
+                infoHtml += `<small class="text-info d-block">
+                    <i class="bi bi-tag me-1"></i>
+                    ${screenshot.step_type}
+                </small>`;
+            }
+
+            if (screenshot.created_at) {
+                const date = new Date(screenshot.created_at);
+                infoHtml += `<small class="text-muted d-block">
+                    <i class="bi bi-clock me-1"></i>
+                    ${date.toLocaleString()}
+                </small>`;
+            }
+
+            if (screenshot.screenshot_url) {
+                infoHtml += `<small class="text-success d-block">
+                    <i class="bi bi-cloud me-1"></i>
+                    来自云端
+                </small>`;
+            }
+
+            if (screenshot.file_size) {
+                infoHtml += `<small class="text-muted">
+                    大小: ${(screenshot.file_size / 1024).toFixed(1)}KB
+                </small>`;
+            }
+
+            return infoHtml || '<small class="text-muted">无详细信息</small>';
+        }
+
+        // 创建错误占位符
+        function createErrorPlaceholder(index) {
+            const col = document.createElement('div');
+            col.className = 'col-md-3 col-sm-4 col-6 mb-3';
+            col.innerHTML = `
+                <div class="card h-100 border-danger">
+                    <div class="card-body text-center py-4">
+                        <i class="bi bi-exclamation-triangle text-danger"></i>
+                        <p class="text-danger small mt-2">截图 ${index + 1} 加载失败</p>
+                    </div>
+                </div>
+            `;
+            return col;
+        }
+
+        // 懒加载图片
+        function lazyLoadImages() {
+            const images = document.querySelectorAll('img[data-src]');
+            console.log(`[Screenshot] 开始懒加载 ${images.length} 张图片`);
+
+            const imageObserver = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        const src = img.dataset.src;
+
+                        if (src) {
+                            img.src = src;
+                            delete img.dataset.src;
+                            observer.unobserve(img);
+                            console.log(`[Screenshot] 懒加载图片: ${src}`);
+                        }
+                    }
+                });
+            }, {
+                rootMargin: '50px' // 提前50px开始加载
             });
+
+            images.forEach(img => imageObserver.observe(img));
         }
 
         // 显示截图大图
         function showScreenshot(path) {
+            if (!path) {
+                showError('截图路径无效');
+                return;
+            }
+
             const modal = new bootstrap.Modal(document.getElementById('screenshotModal'));
             const img = document.getElementById('modalScreenshot');
             const downloadLink = document.getElementById('downloadScreenshot');
 
-            img.src = `/screenshots/${path.split('/').pop()}`;
-            downloadLink.href = `/screenshots/${path.split('/').pop()}`;
-            downloadLink.download = path.split('/').pop();
+            // 优先使用Supabase URL，否则使用本地路径
+            let imgSrc = '';
+            let downloadHref = '';
+            let fileName = '';
+
+            if (path.startsWith('http')) {
+                // Supabase URL
+                imgSrc = path;
+                downloadHref = path;
+                fileName = path.split('/').pop() || 'screenshot.png';
+            } else {
+                // 本地路径
+                fileName = path.split('/').pop() || 'screenshot.png';
+                imgSrc = `/screenshots/${fileName}`;
+                downloadHref = `/screenshots/${fileName}`;
+            }
+
+            img.src = imgSrc;
+            downloadLink.href = downloadHref;
+            downloadLink.download = fileName;
+
+            // 添加加载指示器
+            img.onload = function() {
+                // 图片加载完成
+            };
+            img.onerror = function() {
+                // 图片加载失败，显示错误信息
+                this.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iI2Y4ZjlmYSIvPjx0ZXh0IHg9IjIwMCIgeT0iMTUwIiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9IiM2NzUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIj7lm77niYflkJHm96DmoLjmoIfor7fmoLzlrZfljJY8L3RleHQ+PC9zdmc+';
+                this.style.objectFit = 'contain';
+                downloadLink.style.display = 'none';
+            };
 
             modal.show();
         }

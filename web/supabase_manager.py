@@ -10,9 +10,13 @@ import threading
 import uuid
 import logging
 import dataclasses
-from datetime import datetime, timedelta
+import re
+import time
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
+from functools import lru_cache
 from supabase import create_client, Client
 
 # 配置日志
@@ -35,6 +39,47 @@ except ImportError:
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_SECRET_KEY', os.getenv('SUPABASE_SERVICE_ROLE_KEY'))
 
+# 时区安全处理函数
+def normalize_datetime(dt: datetime) -> datetime:
+    """
+    将datetime转换为无时区时间以避免时区比较错误
+
+    Args:
+        dt: datetime对象，可能有或无时区信息
+
+    Returns:
+        datetime: 无时区的datetime对象
+    """
+    if dt is None:
+        return dt
+
+    if dt.tzinfo is not None:
+        # 有时区时间 -> 转换为UTC并移除时区信息
+        try:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"时区转换失败，使用原始时间: {e}")
+            return dt
+    else:
+        # 已经是无时区时间 -> 直接返回
+        return dt
+
+def safe_datetime_sort_key(task) -> datetime:
+    """
+    安全的排序键函数，处理时区问题
+
+    Args:
+        task: GlobalTask对象
+
+    Returns:
+        datetime: 可用于排序的datetime对象
+    """
+    if hasattr(task, 'created_at') and task.created_at is not None:
+        return normalize_datetime(task.created_at)
+    else:
+        # 降级处理：返回最小可能时间
+        return datetime.min
+
 @dataclass
 class GlobalTask:
     """Global task information that persists across page refreshes"""
@@ -52,6 +97,11 @@ class GlobalTask:
     result: Optional[str] = None
     script_id: Optional[str] = None  # 在数据库中存储为UUID，Python中使用字符串
 
+    @property
+    def global_task_id(self) -> str:
+        """向后兼容的属性，返回task_id"""
+        return self.task_id
+
     def to_dict(self) -> Dict:
         """转换为字典，处理datetime序列化"""
         data = asdict(self)
@@ -62,6 +112,9 @@ class GlobalTask:
             data['last_activity'] = data['last_activity'].isoformat()
         if data['end_time'] and isinstance(data['end_time'], datetime):
             data['end_time'] = data['end_time'].isoformat()
+
+        # 添加global_task_id用于向后兼容
+        data['global_task_id'] = self.global_task_id
         return data
 
     @classmethod
@@ -86,10 +139,17 @@ class GlobalTask:
         if filtered_data.get('end_time') and isinstance(filtered_data['end_time'], str):
             filtered_data['end_time'] = datetime.fromisoformat(filtered_data['end_time'])
 
+        # 4.1 时区标准化 - 确保所有datetime对象都是无时区的
+        for field in ['created_at', 'last_activity', 'end_time']:
+            if field in filtered_data and isinstance(filtered_data[field], datetime):
+                filtered_data[field] = normalize_datetime(filtered_data[field])
+
         # 5. 数据修复 - 自动修复缺失的可选字段
         if 'last_activity' not in filtered_data and 'created_at' in filtered_data:
             filtered_data['last_activity'] = filtered_data['created_at']
             logger.debug(f"自动修复: last_activity字段缺失,设置为created_at")
+
+        # global_task_id现在是property，不需要特殊处理
 
         # 6. 创建对象
         try:
@@ -115,6 +175,318 @@ class GlobalTask:
     @property
     def start_time(self) -> datetime:
         return self.created_at
+
+@dataclass
+class FileInfo:
+    """本地截图文件信息"""
+    path: str           # 本地文件路径
+    timestamp: datetime # 文件创建时间
+    size: int          # 文件大小
+    name: str          # 文件名
+    match_score: float = 0.0  # 匹配度评分
+    url: Optional[str] = None  # Web可访问URL
+
+
+class LocalFileScanner:
+    """本地文件扫描器 - 支持LRU缓存和性能优化"""
+
+    def __init__(self, screenshots_dir: str = "static/screenshots", cache_timeout: int = 300):
+        self.screenshots_dir = screenshots_dir
+        self.cache_timeout = cache_timeout
+        self._cache = {}
+        self._cache_timestamp = 0
+        self._scan_lock = threading.Lock()
+        self._performance_stats = {
+            'scans_count': 0,
+            'cache_hits': 0,
+            'total_scan_time': 0.0,
+            'avg_scan_time': 0.0
+        }
+
+        # 配置参数
+        self.config = self._load_config()
+
+    def _load_config(self) -> Dict[str, Any]:
+        """加载配置参数"""
+        return {
+            # 基础配置
+            'enabled': os.getenv('SCREENSHOT_FALLBACK_ENABLED', 'true').lower() == 'true',
+            'screenshots_dir': os.getenv('SCREENSHOT_DIR', self.screenshots_dir),
+            'cache_timeout': int(os.getenv('SCREENSHOT_CACHE_TIMEOUT', str(self.cache_timeout))),
+
+            # 性能配置
+            'max_files': int(os.getenv('SCREENSHOT_MAX_FILES', '50')),
+            'time_window_minutes': int(os.getenv('SCREENSHOT_TIME_WINDOW', '10')),
+            'scan_batch_size': int(os.getenv('SCREENSHOT_SCAN_BATCH_SIZE', '100')),
+
+            # 功能开关
+            'enable_lru_cache': os.getenv('SCREENSHOT_ENABLE_LRU_CACHE', 'true').lower() == 'true',
+            'enable_performance_monitoring': os.getenv('SCREENSHOT_ENABLE_PERF_MONITOR', 'true').lower() == 'true',
+            'enable_async_scan': os.getenv('SCREENSHOT_ENABLE_ASYNC', 'false').lower() == 'true',
+
+            # 调试配置
+            'debug_mode': os.getenv('SCREENSHOT_DEBUG', 'false').lower() == 'true',
+            'log_level': os.getenv('SCREENSHOT_LOG_LEVEL', 'INFO')
+        }
+
+    def is_enabled(self) -> bool:
+        """检查功能是否启用"""
+        return self.config['enabled']
+
+    def update_config(self, new_config: Dict[str, Any]) -> None:
+        """更新配置"""
+        self.config.update(new_config)
+        logger.info(f"[LocalFileScanner] 配置已更新: {new_config}")
+
+    def scan_screenshots(self) -> List[FileInfo]:
+        """扫描本地截图文件 - 带性能监控和缓存"""
+        # 检查功能是否启用
+        if not self.is_enabled():
+            if self.config['debug_mode']:
+                logger.debug("[LocalFileScanner] 本地截图回退功能已禁用")
+            return []
+
+        current_time = time.time()
+        scan_start_time = time.time()
+
+        # 更新性能统计
+        if self.config['enable_performance_monitoring']:
+            self._performance_stats['scans_count'] += 1
+
+        # 检查缓存
+        if (current_time - self._cache_timestamp < self.cache_timeout and
+            '_files' in self._cache):
+            self._performance_stats['cache_hits'] += 1
+            cache_hit_rate = (self._performance_stats['cache_hits'] /
+                            self._performance_stats['scans_count']) * 100
+            logger.debug(f"[LocalFileScanner] 缓存命中: {len(self._cache['_files'])} 个文件, "
+                        f"命中率: {cache_hit_rate:.1f}%")
+            return self._cache['_files']
+
+        # 使用线程锁防止并发扫描
+        with self._scan_lock:
+            # 双重检查锁定模式
+            if (current_time - self._cache_timestamp < self.cache_timeout and
+                '_files' in self._cache):
+                return self._cache['_files']
+
+            files = []
+            screenshots_path = Path(self.screenshots_dir)
+
+            if not screenshots_path.exists():
+                logger.warning(f"[LocalFileScanner] 截图目录不存在: {self.screenshots_dir}")
+                return []
+
+            try:
+                # 使用os.scandir提高性能
+                scan_start = time.time()
+                with os.scandir(screenshots_dir) as entries:
+                    for entry in entries:
+                        if (entry.is_file() and
+                            entry.name.startswith('screenshot_') and
+                            entry.name.endswith('.png')):
+                            try:
+                                file_path = Path(entry.path)
+                                file_info = self._parse_filename(file_path)
+                                if file_info:
+                                    # 添加文件大小信息
+                                    file_info.size = entry.stat().st_size
+                                    files.append(file_info)
+                            except Exception as file_error:
+                                logger.warning(f"[LocalFileScanner] 解析文件失败 {entry.name}: {file_error}")
+                                continue
+
+                scan_time = time.time() - scan_start
+
+                # 按时间排序
+                files.sort(key=lambda x: x.timestamp)
+
+                # 缓存结果
+                self._cache['_files'] = files
+                self._cache_timestamp = current_time
+                self._cache['_scan_time'] = scan_time
+
+                # 更新性能统计
+                self._performance_stats['total_scan_time'] += scan_time
+                self._performance_stats['avg_scan_time'] = (
+                    self._performance_stats['total_scan_time'] /
+                    self._performance_stats['scans_count']
+                )
+
+                cache_hit_rate = ((self._performance_stats['scans_count'] - 1 - self._performance_stats['cache_hits']) /
+                                max(1, self._performance_stats['scans_count'] - 1)) * 100
+
+                logger.info(f"[LocalFileScanner] 扫描完成: {len(files)} 个截图文件, "
+                          f"耗时: {scan_time:.3f}s, 缓存命中率: {cache_hit_rate:.1f}%")
+
+                # 性能警告
+                if scan_time > 2.0:
+                    logger.warning(f"[LocalFileScanner] 扫描性能警告: 耗时 {scan_time:.3f}s, "
+                                 f"文件数量: {len(files)}")
+
+            except Exception as e:
+                logger.error(f"[LocalFileScanner] 扫描失败: {e}")
+                return []
+
+        return files
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """获取性能统计信息"""
+        return {
+            **self._performance_stats,
+            'cache_hit_rate': (self._performance_stats['cache_hits'] /
+                             max(1, self._performance_stats['scans_count'])) * 100,
+            'cache_valid': (time.time() - self._cache_timestamp < self.cache_timeout),
+            'cached_files_count': len(self._cache.get('_files', [])),
+            'last_scan_time': self._cache.get('_scan_time', 0)
+        }
+
+    def clear_cache(self):
+        """清除缓存"""
+        with self._scan_lock:
+            self._cache.clear()
+            self._cache_timestamp = 0
+            logger.info("[LocalFileScanner] 缓存已清除")
+
+    @lru_cache(maxsize=128)
+    def _cached_parse_filename(self, filename: str, mtime: float) -> Optional[FileInfo]:
+        """带LRU缓存的文件名解析"""
+        file_path = Path(self.screenshots_dir) / filename
+        return self._parse_filename(file_path)
+
+    def _parse_filename(self, file_path: Path) -> Optional[FileInfo]:
+        """解析文件名提取时间戳信息"""
+        # 格式: screenshot_20251214_222529_098_9fa22334.png
+        pattern = r"screenshot_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_(\d{3})_"
+        match = re.search(pattern, file_path.name)
+
+        if match:
+            try:
+                year, month, day, hour, minute, second, millisecond = map(int, match.groups())
+                timestamp = datetime(year, month, day, hour, minute, second, millisecond * 1000)
+
+                # 获取文件大小
+                try:
+                    size = file_path.stat().st_size
+                except OSError:
+                    size = 0
+
+                return FileInfo(
+                    path=str(file_path),
+                    timestamp=timestamp,
+                    size=size,
+                    name=file_path.name
+                )
+            except ValueError as e:
+                logger.warning(f"[LocalFileScanner] 文件名解析失败: {file_path.name} - {e}")
+
+        return None
+
+
+class ScreenshotMatcher:
+    """截图匹配算法"""
+
+    def __init__(self, time_window_minutes: int = 10):
+        self.time_window = timedelta(minutes=time_window_minutes)
+        logger.info(f"[ScreenshotMatcher] 初始化，时间窗口: {time_window_minutes}分钟")
+
+    def match_screenshots_to_task(self, task_info: dict, local_files: List[FileInfo]) -> List[FileInfo]:
+        """将本地截图文件匹配到任务"""
+        if not task_info or not local_files:
+            return []
+
+        task_created = task_info.get('created_at')
+        task_completed = task_info.get('completed_at')
+
+        if not task_created:
+            logger.warning(f"[ScreenshotMatcher] 任务缺少创建时间: {task_info.get('task_id')}")
+            return []
+
+        # 解析任务时间
+        try:
+            if isinstance(task_created, str):
+                start_time = datetime.fromisoformat(task_created.replace('Z', '+00:00'))
+            else:
+                start_time = task_created
+
+            if task_completed:
+                if isinstance(task_completed, str):
+                    end_time = datetime.fromisoformat(task_completed.replace('Z', '+00:00'))
+                else:
+                    end_time = task_completed
+            else:
+                end_time = datetime.now()
+
+            # 确保时间对象有时区信息
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=None)  # 移除时区信息，与文件时间保持一致
+            else:
+                start_time = start_time.replace(tzinfo=None)  # 转换为无时区时间
+
+            if end_time.tzinfo is not None:
+                end_time = end_time.replace(tzinfo=None)
+
+        except Exception as e:
+            logger.error(f"[ScreenshotMatcher] 时间解析失败: {e}")
+            return []
+
+        # 扩展时间窗口
+        extended_start = start_time - self.time_window
+        extended_end = end_time + self.time_window
+
+        logger.debug(f"[ScreenshotMatcher] 任务时间范围: {start_time} - {end_time}")
+        logger.debug(f"[ScreenshotMatcher] 扩展匹配范围: {extended_start} - {extended_end}")
+
+        # 匹配在时间范围内的截图
+        matched_files = []
+        for file_info in local_files:
+            if extended_start <= file_info.timestamp <= extended_end:
+                file_info.match_score = self._calculate_match_score(
+                    file_info.timestamp, start_time, end_time
+                )
+                matched_files.append(file_info)
+
+        # 按匹配度排序
+        matched_files.sort(key=lambda x: x.match_score, reverse=True)
+
+        logger.info(f"[ScreenshotMatcher] 匹配结果: {len(matched_files)} 个文件")
+
+        return matched_files
+
+    def _calculate_match_score(self, file_timestamp: datetime,
+                              task_start: datetime, task_end: datetime) -> float:
+        """计算文件与任务的匹配度"""
+        if task_start <= file_timestamp <= task_end:
+            return 1.0  # 完美匹配：在任务执行期间
+
+        # 计算到任务时间范围的距离
+        if file_timestamp < task_start:
+            distance = (task_start - file_timestamp).total_seconds()
+        else:
+            distance = (file_timestamp - task_end).total_seconds()
+
+        # 距离越近分数越高
+        max_distance = self.time_window.total_seconds()
+        score = max(0, 1 - (distance / max_distance))
+
+        return score
+
+
+class PathConverter:
+    """路径转换器"""
+
+    def __init__(self, base_url: str = "/static/screenshots"):
+        self.base_url = base_url.rstrip('/')
+
+    def convert_to_web_url(self, local_path: str) -> str:
+        """将本地文件路径转换为Web URL"""
+        filename = Path(local_path).name
+        return f"{self.base_url}/{filename}"
+
+    def validate_file_exists(self, local_path: str) -> bool:
+        """验证文件是否存在且可访问"""
+        return Path(local_path).exists() and Path(local_path).is_file()
+
 
 class SupabaseTaskManager:
     """基于Supabase的全局任务管理器"""
@@ -258,31 +630,43 @@ class SupabaseTaskManager:
         try:
             with self.lock:
                 # 添加到内存
-                self.tasks[task.global_task_id] = task
+                # global_task_id已经在__post_init__中自动处理了
+
+                # 使用task_id作为内存存储的主键
+                self.tasks[task.task_id] = task
 
                 # 添加到数据库
                 task_dict = task.to_dict()
                 result = self.supabase.table('tasks').insert(task_dict).execute()
 
                 if result.data:
-                    print(f"任务已添加到数据库: {task.global_task_id}")
+                    print(f"任务已添加到数据库: {task.task_id}")
                     return True
                 else:
-                    print(f"添加任务到数据库失败: {task.global_task_id}")
+                    print(f"添加任务到数据库失败: {task.task_id}")
                     return False
 
         except Exception as e:
             print(f"添加任务时出错: {e}")
             return False
 
-    def update_task(self, global_task_id: str, **kwargs) -> bool:
-        """更新任务状态"""
+    def update_task(self, task_id: str, **kwargs) -> bool:
+        """更新任务状态，支持task_id或global_task_id"""
         try:
             with self.lock:
-                if global_task_id not in self.tasks:
-                    return False
+                # 尝试通过task_id查找
+                task = None
+                if task_id in self.tasks:
+                    task = self.tasks[task_id]
+                else:
+                    # 尝试通过global_task_id查找
+                    for t in self.tasks.values():
+                        if t.global_task_id == task_id or t.task_id == task_id:
+                            task = t
+                            break
 
-                task = self.tasks[global_task_id]
+                if not task:
+                    return False
 
                 # 更新内存中的任务
                 for key, value in kwargs.items():
@@ -300,28 +684,38 @@ class SupabaseTaskManager:
                 if 'last_activity' in update_data and isinstance(update_data['last_activity'], datetime):
                     update_data['last_activity'] = update_data['last_activity'].isoformat()
 
-                result = self.supabase.table('tasks').update(update_data).eq('task_id', global_task_id).execute()
+                result = self.supabase.table('tasks').update(update_data).eq('task_id', task.task_id).execute()
 
                 if result.data:
-                    logger.debug(f"Task updated successfully: {global_task_id}, affected rows: {len(result.data)}")
+                    logger.debug(f"Task updated successfully: {task.task_id}, affected rows: {len(result.data)}")
                     return True
                 else:
-                    logger.warning(f"Task update returned no data for task_id: {global_task_id}")
+                    logger.warning(f"Task update returned no data for task_id: {task.task_id}")
                     return False
 
         except Exception as e:
             print(f"更新任务时出错: {e}")
             return False
 
-    def get_task(self, global_task_id: str) -> Optional[GlobalTask]:
-        """获取指定任务"""
+    def get_task(self, task_id: str) -> Optional[GlobalTask]:
+        """获取指定任务，支持task_id或global_task_id"""
         with self.lock:
-            return self.tasks.get(global_task_id)
+            # 尝试直接通过task_id查找
+            if task_id in self.tasks:
+                return self.tasks[task_id]
+
+            # 尝试通过global_task_id查找
+            for task in self.tasks.values():
+                if task.global_task_id == task_id or task.task_id == task_id:
+                    return task
+
+            return None
 
     def get_all_tasks(self) -> List[GlobalTask]:
-        """获取所有任务"""
+        """获取所有任务（按创建时间降序）"""
         with self.lock:
-            return list(self.tasks.values())
+            # 按创建时间降序排列 - 使用时区安全的排序
+            return sorted(self.tasks.values(), key=safe_datetime_sort_key, reverse=True)
 
     def get_running_tasks(self) -> List[GlobalTask]:
         """获取正在运行的任务"""
@@ -331,14 +725,16 @@ class SupabaseTaskManager:
     def create_task(self, task_id: str, session_id: str, user_id: str,
                    task_description: str, config: Dict) -> GlobalTask:
         """Create a new global task"""
+        # 使用无时区的UTC时间保持一致性
+        now = normalize_datetime(datetime.utcnow())
         task = GlobalTask(
             task_id=task_id,
             session_id=session_id,
             user_id=user_id,
             task_description=task_description,
             status="running",
-            created_at=datetime.now(),
-            last_activity=datetime.now(),
+            created_at=now,
+            last_activity=now,
             config=config
         )
         self.add_task(task)
@@ -346,42 +742,51 @@ class SupabaseTaskManager:
 
     def update_task_status(self, task_id: str, status: str, error_message: str = None, result: str = None):
         """Update task status"""
-        update_data = {'status': status, 'last_activity': datetime.now()}
+        # 使用无时区的UTC时间保持一致性
+        now = normalize_datetime(datetime.utcnow())
+        update_data = {'status': status, 'last_activity': now}
         if error_message:
             update_data['error_message'] = error_message
         if result:
             update_data['result'] = result
         if status in ['completed', 'stopped', 'error']:
-            update_data['end_time'] = datetime.now()
+            update_data['end_time'] = now
 
         return self.update_task(task_id, **update_data)
 
     def get_tasks_by_session(self, session_id: str) -> List[GlobalTask]:
-        """Get tasks by session ID"""
+        """Get tasks by session ID（按创建时间降序）"""
         with self.lock:
-            return [task for task in self.tasks.values() if task.session_id == session_id]
+            # 过滤并按创建时间降序排列 - 使用时区安全的排序
+            return sorted(
+                [task for task in self.tasks.values() if task.session_id == session_id],
+                key=safe_datetime_sort_key,
+                reverse=True
+            )
 
     def stop_task(self, task_id: str) -> bool:
-        """Stop a task"""
+        """Stop a task, supports task_id or global_task_id"""
         try:
             with self.lock:
-                if task_id not in self.tasks:
+                # 查找任务
+                task = self.get_task(task_id)
+                if not task:
                     return False
 
                 # Update task status
-                self.update_task_status(task_id, "stopped")
+                self.update_task_status(task.task_id, "stopped")
 
                 # Stop thread if exists
-                if task_id in self.active_threads:
+                if task.task_id in self.active_threads:
                     try:
-                        thread = self.active_threads[task_id]
+                        thread = self.active_threads[task.task_id]
                         # 由于Python线程不能直接强制停止，我们只能标记状态
                         # 在实际的任务执行中需要检查停止标志
-                        print(f"标记任务停止: {task_id}")
+                        print(f"标记任务停止: {task.task_id}")
                     except Exception as thread_error:
                         print(f"停止线程时出错: {thread_error}")
                     finally:
-                        del self.active_threads[task_id]
+                        del self.active_threads[task.task_id]
 
                 return True
 
@@ -389,24 +794,26 @@ class SupabaseTaskManager:
             print(f"停止任务时出错: {e}")
             return False
 
-    def delete_task(self, global_task_id: str) -> bool:
-        """删除任务"""
+    def delete_task(self, task_id: str) -> bool:
+        """删除任务，支持task_id或global_task_id"""
         try:
             with self.lock:
-                if global_task_id not in self.tasks:
+                # 查找任务
+                task = self.get_task(task_id)
+                if not task:
                     return False
 
                 # 从内存中删除
-                del self.tasks[global_task_id]
+                del self.tasks[task.task_id]
 
                 # 从数据库中删除
-                result = self.supabase.table('tasks').delete().eq('task_id', global_task_id).execute()
+                result = self.supabase.table('tasks').delete().eq('task_id', task.task_id).execute()
 
                 if result.data:
-                    print(f"任务已删除: {global_task_id}")
+                    print(f"任务已删除: {task.task_id}")
                     return True
                 else:
-                    print(f"删除任务失败: {global_task_id}")
+                    print(f"删除任务失败: {task.task_id}")
                     return False
 
         except Exception as e:
@@ -451,7 +858,7 @@ class SupabaseTaskManager:
 
                         # 2. 尝试加载单个任务
                         task = GlobalTask.from_dict(task_data)
-                        self.tasks[task.global_task_id] = task
+                        self.tasks[task.task_id] = task
                         success_count += 1
 
                     except Exception as e:
@@ -502,16 +909,16 @@ class SupabaseTaskManager:
         # 由于Supabase是实时保存的，这个方法主要是为了兼容性
         return True
 
-    def register_thread(self, global_task_id: str, thread: threading.Thread):
-        """注册任务线程"""
+    def register_thread(self, task_id: str, thread: threading.Thread):
+        """注册任务线程，支持task_id或global_task_id"""
         with self.lock:
-            self.active_threads[global_task_id] = thread
+            self.active_threads[task_id] = thread
 
-    def unregister_thread(self, global_task_id: str):
-        """取消注册任务线程"""
+    def unregister_thread(self, task_id: str):
+        """取消注册任务线程，支持task_id或global_task_id"""
         with self.lock:
-            if global_task_id in self.active_threads:
-                del self.active_threads[global_task_id]
+            if task_id in self.active_threads:
+                del self.active_threads[task_id]
 
     def cleanup_old_tasks(self, days: int = 30) -> int:
         """清理旧任务，返回删除的任务数量"""
@@ -667,12 +1074,16 @@ class SupabaseTaskManager:
     def get_step_report_data(self, task_id: str) -> Dict:
         """获取步骤报告数据"""
         try:
+            logger.info(f"[DataExtraction] 开始获取任务报告数据: {task_id}")
+
             # Get task info
             task_result = self.supabase.table('tasks')\
                 .select('*')\
                 .eq('task_id', task_id)\
-                .single()\
                 .execute()
+
+            task_data = task_result.data[0] if task_result.data else None
+            logger.info(f"[DataExtraction] 任务信息: {task_data}")
 
             # Get steps
             steps_result = self.supabase.table('task_steps')\
@@ -681,26 +1092,260 @@ class SupabaseTaskManager:
                 .order('step_number', desc=False)\
                 .execute()
 
-            # Get screenshots
+            # Get screenshots from step_screenshots table
             screenshots_result = self.supabase.table('step_screenshots')\
                 .select('*')\
                 .eq('task_id', task_id)\
                 .order('created_at', desc=False)\
                 .execute()
 
+            # Extract screenshots from steps that have screenshot_path
+            step_screenshots = []
+            if steps_result.data:
+                for step in steps_result.data:
+                    if step.get('screenshot_path') or step.get('screenshot_url'):
+                        screenshot_data = {
+                            'screenshot_path': step.get('screenshot_path'),
+                            'screenshot_url': step.get('screenshot_url'),
+                            'created_at': step.get('created_at') or step.get('timestamp'),
+                            'step_number': step.get('step_number'),
+                            'step_type': step.get('step_type') or step.get('action'),
+                            'step_id': step.get('step_id'),
+                            'task_id': step.get('task_id'),
+                            'source': 'task_steps'
+                        }
+                        step_screenshots.append(screenshot_data)
+                        logger.info(f"[DataExtraction] 从步骤中提取截图: 步骤{step.get('step_number')} -> {step.get('screenshot_path')}")
+
+            # Combine screenshots from both sources
+            all_screenshots = []
+            if screenshots_result.data:
+                all_screenshots.extend(screenshots_result.data)
+                logger.info(f"[DataExtraction] 从step_screens表获取: {len(screenshots_result.data)} 张截图")
+
+            if step_screenshots:
+                all_screenshots.extend(step_screenshots)
+                logger.info(f"[DataExtraction] 从task_steps提取: {len(step_screenshots)} 张截图")
+
+            # 本地文件回退：当数据库无截图数据时，扫描本地文件
+            if not all_screenshots and task_data:
+                logger.info(f"[DataExtraction] 数据库无截图数据，尝试本地文件回退")
+                local_screenshots = self._get_local_screenshots_fallback(task_id, task_data)
+                if local_screenshots:
+                    all_screenshots.extend(local_screenshots)
+                    logger.info(f"[DataExtraction] 本地文件回退成功: {len(local_screenshots)} 张截图")
+                else:
+                    logger.info(f"[DataExtraction] 本地文件回退: 未找到匹配的截图")
+
+            # Log statistics
+            logger.info(f"[DataExtraction] 统计信息:")
+            logger.info(f"  - 任务ID: {task_id}")
+            logger.info(f"  - 步骤数量: {len(steps_result.data) if steps_result.data else 0}")
+            logger.info(f"  - 截图数量(独立表): {len(screenshots_result.data) if screenshots_result.data else 0}")
+            logger.info(f"  - 截图数量(步骤中): {len(step_screenshots)}")
+            logger.info(f"  - 截图数量(本地回退): {len([s for s in all_screenshots if s.get('source') == 'local_fallback'])}")
+            logger.info(f"  - 截图总数: {len(all_screenshots)}")
+
             return {
-                'task': task_result.data if task_result.data else None,
+                'task': task_data,
                 'steps': steps_result.data if steps_result.data else [],
-                'screenshots': screenshots_result.data if screenshots_result.data else []
+                'screenshots': all_screenshots
             }
 
         except Exception as e:
             logger.error(f"Error getting step report data: {e}")
+            logger.exception(f"[DataExtraction] 获取任务报告数据失败: {task_id}")
+
+            # 返回部分数据而不是完全失败
+            task_data = task_data if 'task_data' in locals() else None
+            steps_data = steps_result.data if 'steps_result' in locals() and hasattr(steps_result, 'data') else []
+            screenshots_data = all_screenshots if 'all_screenshots' in locals() else []
+
+            logger.warning(f"[DataExtraction] 返回部分数据: 任务={task_data is not None}, 步骤={len(steps_data)}, 截图={len(screenshots_data)}")
+
             return {
-                'task': None,
-                'steps': [],
-                'screenshots': []
+                'task': task_data,
+                'steps': steps_data,
+                'screenshots': screenshots_data,
+                'error': True,
+                'error_message': str(e)
             }
+
+    def _get_local_screenshots_fallback(self, task_id: str, task_info: dict) -> List[dict]:
+        """本地文件回退获取截图 - 增强错误处理和日志记录"""
+        if not task_info:
+            logger.warning(f"[LocalFile] 任务信息为空，无法进行本地文件回退: {task_id[:8]}")
+            return []
+
+        fallback_start_time = time.time()
+        error_stats = {
+            'scan_errors': 0,
+            'match_errors': 0,
+            'path_errors': 0,
+            'validation_errors': 0
+        }
+
+        try:
+            logger.info(f"[LocalFile] 开始本地文件回退: 任务 {task_id[:8]}...")
+
+            # 1. 扫描本地文件
+            scanner = LocalFileScanner()
+
+            # 检查扫描器是否启用
+            if not scanner.is_enabled():
+                logger.info(f"[LocalFile] 本地文件回退功能已禁用")
+                return []
+
+            local_files = scanner.scan_screenshots()
+
+            if not local_files:
+                logger.warning(f"[LocalFile] 未找到本地截图文件，目录: {scanner.screenshots_dir}")
+                self._log_fallback_statistics(task_id, 0, fallback_start_time, error_stats)
+                return []
+
+            logger.info(f"[LocalFile] 扫描到 {len(local_files)} 个本地截图文件")
+
+            # 记录性能统计
+            if scanner.config['enable_performance_monitoring']:
+                perf_stats = scanner.get_performance_stats()
+                logger.debug(f"[LocalFile] 扫描器性能统计: {perf_stats}")
+
+            # 2. 匹配到任务
+            try:
+                matcher = ScreenshotMatcher()
+                matched_files = matcher.match_screenshots_to_task(task_info, local_files)
+            except Exception as match_error:
+                error_stats['match_errors'] += 1
+                logger.error(f"[LocalFile] 截图匹配失败: {match_error}")
+                self._log_fallback_statistics(task_id, 0, fallback_start_time, error_stats)
+                return []
+
+            if not matched_files:
+                logger.warning(f"[LocalFile] 未找到与任务匹配的截图，任务时间范围可能不匹配")
+                self._log_fallback_statistics(task_id, 0, fallback_start_time, error_stats)
+                return []
+
+            logger.info(f"[LocalFile] 匹配到 {len(matched_files)} 个相关截图文件")
+
+            # 3. 转换路径和格式
+            try:
+                converter = PathConverter()
+                result = []
+
+                # 限制返回的截图数量
+                max_screenshots = scanner.config['max_files']
+                processed_files = 0
+                valid_files = 0
+
+                for file_info in matched_files[:max_screenshots]:
+                    processed_files += 1
+                    try:
+                        # 验证文件存在性
+                        if converter.validate_file_exists(file_info.path):
+                            # 验证文件可读性
+                            if self._validate_screenshot_file(file_info.path):
+                                screenshot_data = {
+                                    'screenshot_path': file_info.path,
+                                    'screenshot_url': converter.convert_to_web_url(file_info.path),
+                                    'created_at': file_info.timestamp.isoformat(),
+                                    'file_size': file_info.size,
+                                    'match_score': file_info.match_score,
+                                    'source': 'local_fallback',
+                                    'task_id': task_id,
+                                    'step_number': None,  # 本地文件无法确定步骤号
+                                    'step_id': None
+                                }
+                                result.append(screenshot_data)
+                                valid_files += 1
+                            else:
+                                error_stats['validation_errors'] += 1
+                                logger.warning(f"[LocalFile] 文件验证失败: {file_info.path}")
+                        else:
+                            error_stats['path_errors'] += 1
+                            logger.warning(f"[LocalFile] 文件不存在: {file_info.path}")
+
+                    except Exception as file_error:
+                        error_stats['validation_errors'] += 1
+                        logger.warning(f"[LocalFile] 处理文件时出错 {file_info.path}: {file_error}")
+                        continue
+
+                logger.info(f"[LocalFile] 文件处理完成: 处理 {processed_files} 个，有效 {valid_files} 个")
+
+            except Exception as conversion_error:
+                error_stats['path_errors'] += 1
+                logger.error(f"[LocalFile] 路径转换失败: {conversion_error}")
+                return []
+
+            # 记录成功统计
+            fallback_time = time.time() - fallback_start_time
+            logger.info(f"[LocalFile] 回退成功: 返回 {len(result)} 张有效截图, 耗时: {fallback_time:.3f}s")
+            self._log_fallback_statistics(task_id, len(result), fallback_start_time, error_stats)
+
+            return result
+
+        except Exception as e:
+            fallback_time = time.time() - fallback_start_time
+            logger.error(f"[LocalFile] 本地文件回退失败: {e}, 耗时: {fallback_time:.3f}s")
+            logger.error(f"[LocalFile] 错误详情: {type(e).__name__}: {str(e)}")
+
+            # 记录错误统计
+            if scanner.config['debug_mode']:
+                import traceback
+                logger.debug(f"[LocalFile] 错误堆栈: {traceback.format_exc()}")
+
+            self._log_fallback_statistics(task_id, 0, fallback_start_time, error_stats)
+            return []
+
+    def _validate_screenshot_file(self, file_path: str) -> bool:
+        """验证截图文件是否有效"""
+        try:
+            path = Path(file_path)
+            if not path.exists() or not path.is_file():
+                return False
+
+            # 检查文件大小
+            file_size = path.stat().st_size
+            if file_size == 0:
+                return False
+
+            # 检查文件扩展名
+            if path.suffix.lower() != '.png':
+                return False
+
+            # 简单的文件头验证
+            with open(path, 'rb') as f:
+                header = f.read(8)
+                # PNG文件头: \x89PNG\r\n\x1a\n
+                if not header.startswith(b'\x89PNG\r\n\x1a\n'):
+                    return False
+
+            return True
+        except Exception as e:
+            logger.debug(f"[LocalFile] 文件验证异常 {file_path}: {e}")
+            return False
+
+    def _log_fallback_statistics(self, task_id: str, result_count: int, start_time: float, error_stats: dict):
+        """记录回退统计信息"""
+        try:
+            total_time = time.time() - start_time
+            total_errors = sum(error_stats.values())
+
+            logger.info(f"[LocalFile] 回退统计 - 任务 {task_id[:8]}:")
+            logger.info(f"  - 执行时间: {total_time:.3f}s")
+            logger.info(f"  - 返回截图: {result_count} 张")
+            logger.info(f"  - 错误总数: {total_errors}")
+
+            if total_errors > 0:
+                logger.warning(f"[LocalFile] 错误分类: {error_stats}")
+
+            # 性能警告
+            if total_time > 3.0:
+                logger.warning(f"[LocalFile] 性能警告: 回退耗时 {total_time:.3f}s")
+
+        except Exception as log_error:
+            logger.error(f"[LocalFile] 统计日志记录失败: {log_error}")
+            logger.exception(f"[LocalFile] 错误详情")
+            return []
 
     def cleanup_old_steps(self, days: int = 30) -> int:
         """清理旧步骤数据"""
@@ -733,7 +1378,7 @@ class SupabaseTaskManager:
     def get_statistics(self, days: int = 30) -> Dict:
         """获取任务统计信息"""
         try:
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
             # 计算时间范围
             start_date = (datetime.now() - timedelta(days=days)).isoformat()

@@ -21,8 +21,19 @@ class PhoneAgentWeb {
     }
 
     init() {
-        // Initialize Socket.IO connection
-        this.socket = io();
+        // Initialize Socket.IO connection with robust configuration
+        this.socket = io({
+            transports: ['polling', 'websocket'],
+            upgrade: true,
+            rememberUpgrade: true,
+            timeout: 20000,
+            forceNew: false,
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            maxReconnectionAttempts: 5
+        });
         this.setupSocketListeners();
 
         // Setup UI event listeners
@@ -48,12 +59,54 @@ class PhoneAgentWeb {
             console.log('Connected to server');
             this.isConnected = true;
             this.updateConnectionStatus(true);
+            // 清除之前的连接错误提示
+            this.clearConnectionErrors();
         });
 
-        this.socket.on('disconnect', () => {
-            console.log('Disconnected from server');
+        this.socket.on('disconnect', (reason) => {
+            console.log('Disconnected from server, reason:', reason);
             this.isConnected = false;
             this.updateConnectionStatus(false);
+
+            // 根据断开原因提供不同的处理
+            if (reason === 'io server disconnect') {
+                // 服务器主动断开，需要重新连接
+                this.socket.connect();
+            } else if (reason === 'ping timeout') {
+                console.log('连接超时，尝试重新连接...');
+            }
+        });
+
+        // 添加连接错误处理
+        this.socket.on('connect_error', (error) => {
+            console.error('Socket connection error:', error);
+            this.isConnected = false;
+            this.updateConnectionStatus(false);
+
+            // 根据错误类型提供用户提示
+            if (error.message && error.message.includes('Invalid frame header')) {
+                console.warn('WebSocket frame error, falling back to polling');
+                // 强制使用长轮询
+                this.socket.io.opts.transports = ['polling'];
+            } else {
+                this.showToast('连接服务器失败，请检查网络连接', 'warning');
+            }
+        });
+
+        // 添加重连尝试事件
+        this.socket.on('reconnect_attempt', (attemptNumber) => {
+            console.log(`重连尝试 ${attemptNumber}`);
+            this.showToast(`正在重连服务器... (${attemptNumber}/5)`, 'info');
+        });
+
+        this.socket.on('reconnect', (attemptNumber) => {
+            console.log(`重连成功，尝试次数: ${attemptNumber}`);
+            this.showToast('重新连接到服务器', 'success');
+        });
+
+        this.socket.on('reconnect_failed', () => {
+            console.error('重连失败');
+            this.showToast('无法连接到服务器，请刷新页面重试', 'error');
         });
 
         this.socket.on('joined_session', (data) => {
@@ -301,7 +354,7 @@ class PhoneAgentWeb {
 
         const time = timestamp || new Date().toLocaleTimeString();
         const roleIcon = this.getRoleIcon(role);
-        const roleClass = role === 'user' ? '用户' : role === 'assistant' ? '助手' : '系统';
+        const roleClass = role === 'user' ? '最帅的Dawin' : role === 'assistant' ? '助手' : 'Terminal Agent';
 
         // 检测是否为长消息
         const formattedContent = this.formatMessage(content);
@@ -510,6 +563,12 @@ class PhoneAgentWeb {
         }
     }
 
+    clearConnectionErrors() {
+        // 清除控制台中的连接相关警告
+        console.clear();
+        console.log('连接错误已清除，系统正常运行');
+    }
+
     updateExecutionTime() {
         if (this.taskStartTime && this.isConnected) {
             const elapsed = Math.floor((new Date() - this.taskStartTime) / 1000);
@@ -612,26 +671,97 @@ class PhoneAgentWeb {
             // 显示加载状态
             this.showTaskHistoryLoading(true);
 
+            console.log('🔄 开始加载任务历史...');
             const response = await fetch('/api/tasks');
+
+            console.log('📡 API响应状态:', response.status, response.statusText);
+
             if (response.ok) {
                 const data = await response.json();
+
+                // 数据流追踪 - 步骤1: 记录API返回的原始数据
+                console.group('🔍 [数据流追踪] loadTaskHistory - API响应数据');
+                console.log('完整响应数据:', data);
+                console.log('任务数组:', data.data?.tasks);
+                console.log('任务数量:', data.data?.tasks?.length || 0);
+
+                if (data.data?.tasks && data.data.tasks.length > 0) {
+                    console.log('第一个任务的时间戳详情:');
+                    const firstTask = data.data.tasks[0];
+                    console.log('- start_time:', firstTask.start_time);
+                    console.log('- start_time 类型:', typeof firstTask.start_time);
+                    console.log('- created_at:', firstTask.created_at);
+                    console.log('- created_at 类型:', typeof firstTask.created_at);
+                    console.log('- updated_at:', firstTask.updated_at);
+                    console.log('- updated_at 类型:', typeof firstTask.updated_at);
+
+                    // 分析所有任务的时间戳格式
+                    console.log('\n所有任务的时间戳分析:');
+                    data.data.tasks.forEach((task, index) => {
+                        console.log(`任务${index + 1}:`, {
+                            task_id: task.task_id,
+                            start_time: task.start_time,
+                            start_time_type: typeof task.start_time,
+                            created_at: task.created_at,
+                            created_at_type: typeof task.created_at
+                        });
+                    });
+                }
+                console.groupEnd();
+
                 // 适配新的API响应格式
                 this.updateTaskHistoryList(data.data?.tasks || []);
             } else {
-                const errorData = await response.json();
-                this.showToast(errorData.error || '加载任务历史失败', 'error');
-                this.updateTaskHistoryList([]);
+                console.error('❌ API请求失败，状态码:', response.status);
+                let errorMessage = `请求失败 (${response.status} ${response.statusText})`;
+
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } catch (parseError) {
+                    console.warn('无法解析错误响应:', parseError);
+                }
+
+                // 使用专门的错误显示方法
+                this.showTaskHistoryError(errorMessage);
+                this.showToast(errorMessage, 'error');
             }
         } catch (error) {
-            console.error('Error loading task history:', error);
-            this.showToast('加载任务历史失败，请检查网络连接', 'error');
-            this.updateTaskHistoryList([]);
+            console.error('❌ 网络请求异常:', error);
+            console.error('错误详情:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack
+            });
+
+            // 提供更具体的错误信息
+            let userMessage = '网络连接失败，请检查:';
+            if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                userMessage = '无法连接到服务器，请检查服务是否运行在正确的端口';
+            } else if (error.name === 'AbortError') {
+                userMessage = '请求超时，请重试';
+            } else {
+                userMessage = `加载失败: ${error.message}`;
+            }
+
+            // 使用专门的错误显示方法
+            this.showTaskHistoryError(userMessage);
+            this.showToast(userMessage, 'error');
         } finally {
             this.showTaskHistoryLoading(false);
         }
     }
 
     async stopHistoryTask(taskId) {
+        // 参数验证
+        if (!taskId || taskId === 'undefined' || taskId === 'null' || typeof taskId !== 'string') {
+            console.error('无效的任务ID:', taskId);
+            this.showToast('无效的任务ID，请刷新页面重试', 'error');
+            return;
+        }
+
+        console.log('停止任务:', taskId);
+
         try {
             const response = await fetch(`/api/tasks/${taskId}/stop`, {
                 method: 'POST',
@@ -640,18 +770,22 @@ class PhoneAgentWeb {
                 }
             });
 
+            console.log('停止任务响应状态:', response.status);
+
             if (response.ok) {
                 const data = await response.json();
+                console.log('停止任务成功:', data);
                 this.showToast(data.message, 'success');
                 // 刷新任务历史
                 await this.loadTaskHistory();
             } else {
                 const errorData = await response.json();
+                console.error('停止任务失败:', errorData);
                 this.showToast(errorData.error || '停止任务失败', 'error');
             }
         } catch (error) {
-            console.error('Error stopping history task:', error);
-            this.showToast('停止任务失败', 'error');
+            console.error('停止任务异常:', error);
+            this.showToast(`停止任务失败: ${error.message}`, 'error');
         }
     }
 
@@ -725,7 +859,7 @@ class PhoneAgentWeb {
                                         <tr><td><strong>执行时间:</strong></td><td>${script.execution_time || 0}秒</td></tr>
                                         <tr><td><strong>设备ID:</strong></td><td>${script.device_id || 'N/A'}</td></tr>
                                         <tr><td><strong>模型:</strong></td><td>${script.model_name || 'N/A'}</td></tr>
-                                        <tr><td><strong>创建时间:</strong></td><td>${script.created_at ? new Date(script.created_at).toLocaleString() : 'N/A'}</td></tr>
+                                        <tr><td><strong>创建时间:</strong></td><td>${script.created_at ? this.formatDateTime(script.created_at) : 'N/A'}</td></tr>
                                     </table>
                                 </div>
                                 <div class="col-md-6">
@@ -1118,30 +1252,94 @@ class PhoneAgentWeb {
     }
 
     updateTaskHistoryList(tasks) {
-        const container = document.getElementById('task-history-list');
+        try {
+            // 数据流追踪 - 步骤2: 记录接收到的任务数据
+            console.group('🔍 [数据流追踪] updateTaskHistoryList - 任务数据处理');
+            console.log('接收到的任务数组:', tasks);
+            console.log('任务数量:', tasks.length);
 
-        if (!tasks || tasks.length === 0) {
-            container.innerHTML = `
-                <div class="text-center text-muted py-5">
-                    <div class="mb-3">
-                        <i class="fas fa-history fa-3x opacity-50"></i>
+            // ✅ 修复：在函数开始处统一声明container变量并添加DOM验证
+            const container = document.getElementById('task-history-list');
+            if (!container) {
+                console.error('Task history container element not found');
+                this.showToast('页面元素错误，请刷新页面', 'error');
+                console.groupEnd();
+                return;
+            }
+
+            if (!tasks || tasks.length === 0) {
+                console.log('没有任务数据，显示空状态');
+                console.groupEnd();
+
+                container.innerHTML = `
+                    <div class="text-center text-muted py-5">
+                        <div class="mb-3">
+                            <i class="fas fa-history fa-3x opacity-50"></i>
+                        </div>
+                        <h5 class="mb-2">暂无任务历史</h5>
+                        <p class="small">
+                            还没有执行过任何任务。<br>
+                            <a href="#" onclick="phoneAgentWeb.switchTab('control')" class="text-primary">
+                                点击这里开始执行第一个任务
+                            </a>
+                        </p>
                     </div>
-                    <h5 class="mb-2">暂无任务历史</h5>
-                    <p class="small">
-                        还没有执行过任何任务。<br>
-                        <a href="#" onclick="phoneAgentWeb.switchTab('control')" class="text-primary">
-                            点击这里开始执行第一个任务
-                        </a>
-                    </p>
-                </div>
-            `;
-            return;
-        }
+                `;
+                return;
+            }
 
-        const tasksHtml = tasks.map(task => {
+        // 前端排序：按创建时间降序（作为后端排序的备用）
+        console.log('\n开始前端排序...');
+        const sortedTasks = tasks.sort((a, b) => {
+            const timeA = new Date(a.start_time);
+            const timeB = new Date(b.start_time);
+
+            console.log(`排序比较 - 任务A(${a.task_id}):`, {
+                start_time: a.start_time,
+                parsed: timeA,
+                isValid: !isNaN(timeA.getTime())
+            });
+            console.log(`排序比较 - 任务B(${b.task_id}):`, {
+                start_time: b.start_time,
+                parsed: timeB,
+                isValid: !isNaN(timeB.getTime())
+            });
+
+            // 处理无效时间戳
+            if (isNaN(timeA.getTime()) && isNaN(timeB.getTime())) return 0;
+            if (isNaN(timeA.getTime())) return 1;
+            if (isNaN(timeB.getTime())) return -1;
+
+            return timeB - timeA; // 降序排列
+        });
+
+        console.log('排序完成，前3个任务:');
+        sortedTasks.slice(0, 3).forEach((task, index) => {
+            console.log(`${index + 1}. ${task.task_id}: ${task.start_time}`);
+        });
+        console.groupEnd();
+
+        // 数据流追踪 - 步骤3: 追踪时间格式化
+        console.group('🔍 [数据流追踪] 任务渲染 - 时间格式化处理');
+
+        const tasksHtml = sortedTasks.map((task, index) => {
             const statusClass = task.status;
             const statusText = this.getStatusText(task.status);
+
+            console.log(`\n任务${index + 1} (${task.task_id}) 时间处理:`, {
+                start_time: task.start_time,
+                start_time_type: typeof task.start_time
+            });
+
+            // 调用 getTimeAgo 前记录
+            console.log('调用 getTimeAgo 前...');
             const timeAgo = this.getTimeAgo(task.start_time);
+            console.log('getTimeAgo 返回:', timeAgo);
+
+            // 调用 formatFullDateTime 前记录
+            console.log('调用 formatFullDateTime 前...');
+            const fullDateTime = this.formatFullDateTime(task.start_time);
+            console.log('formatFullDateTime 返回:', fullDateTime);
 
             return `
                 <div class="task-history-item ${statusClass}" data-task-id="${task.task_id}">
@@ -1153,33 +1351,53 @@ class PhoneAgentWeb {
                             ${statusText}
                         </span>
                     </div>
-                    <div class="task-time">${timeAgo}</div>
                     ${task.task_description && task.task_description.length > 30 ? `<div class="task-description">${task.task_description}</div>` : ''}
-                    <div class="task-actions">
-                        ${task.status === 'running' ? `
-                            <button class="stop-btn" onclick="phoneAgentWeb.stopHistoryTask('${task.task_id}')">
-                                <i class="fas fa-stop"></i> 停止
+                    <div class="task-footer">
+                        <div class="task-time" title="${this.formatFullDateTime(task.start_time)}">${timeAgo}</div>
+                        <div class="task-actions">
+                            ${task.status === 'running' ? `
+                                <button class="btn-sm stop-btn" onclick="phoneAgentWeb.stopHistoryTask('${task.task_id}')" title="停止任务">
+                                    <i class="fas fa-stop"></i> 停止
+                                </button>
+                            ` : ''}
+                            ${task.status === 'completed' || task.status === 'error' || task.status === 'stopped' ? `
+                                <button class="btn-sm report-btn" onclick="phoneAgentWeb.viewTaskReport('${task.task_id}')" title="查看执行报告">
+                                    <i class="fas fa-chart-line"></i> 报告
+                                </button>
+                            ` : ''}
+                            ${task.script_id ? `
+                                <button class="btn-sm script-btn" onclick="phoneAgentWeb.viewScript('${task.script_id}')" title="查看脚本">
+                                    <i class="fas fa-code"></i> 脚本
+                                </button>
+                            ` : ''}
+                            <button class="btn-sm view-btn" onclick="phoneAgentWeb.viewTaskDetails('${task.task_id}')" title="查看详情">
+                                <i class="fas fa-eye"></i> 查看
                             </button>
-                        ` : ''}
-                        ${task.status === 'completed' || task.status === 'error' || task.status === 'stopped' ? `
-                            <button class="report-btn" onclick="phoneAgentWeb.viewTaskReport('${task.task_id}')" title="查看执行报告">
-                                <i class="fas fa-chart-line"></i> 报告
-                            </button>
-                        ` : ''}
-                        ${task.script_id ? `
-                            <button class="script-btn" onclick="phoneAgentWeb.viewScript('${task.script_id}')" title="查看脚本">
-                                <i class="fas fa-code"></i> 脚本
-                            </button>
-                        ` : ''}
-                        <button class="view-btn" onclick="phoneAgentWeb.viewTaskDetails('${task.task_id}')">
-                            <i class="fas fa-eye"></i> 查看
-                        </button>
+                        </div>
                     </div>
                 </div>
             `;
         }).join('');
 
+        console.groupEnd(); // 结束数据流追踪 - 步骤3
+
         container.innerHTML = tasksHtml;
+
+        } catch (error) {
+            console.error('任务历史渲染错误:', error);
+
+            // 根据错误类型提供不同的错误提示
+            if (error instanceof ReferenceError) {
+                this.showToast('页面脚本错误，请刷新页面重试', 'error');
+            } else if (error instanceof TypeError) {
+                this.showToast('数据格式错误，请联系技术支持', 'error');
+            } else {
+                this.showToast('渲染失败，请重试', 'warning');
+            }
+
+            // 确保调试信息完整
+            console.groupEnd();
+        }
     }
 
     showTaskDetails(task) {
@@ -1219,12 +1437,12 @@ class PhoneAgentWeb {
                             </div>
                             <div class="row mb-3">
                                 <div class="col-sm-3"><strong>开始时间:</strong></div>
-                                <div class="col-sm-9">${new Date(task.start_time).toLocaleString()}</div>
+                                <div class="col-sm-9">${this.formatDateTime(task.start_time)}</div>
                             </div>
                             ${task.end_time ? `
                                 <div class="row mb-3">
                                     <div class="col-sm-3"><strong>结束时间:</strong></div>
-                                    <div class="col-sm-9">${new Date(task.end_time).toLocaleString()}</div>
+                                    <div class="col-sm-9">${this.formatDateTime(task.end_time)}</div>
                                 </div>
                             ` : ''}
                             ${resultContent}
@@ -1233,7 +1451,7 @@ class PhoneAgentWeb {
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
                             ${task.status === 'running' ? `
-                                <button type="button" class="btn btn-danger" onclick="phoneAgentWeb.stopHistoryTask('${task.global_task_id}'); bootstrap.Modal.getInstance(document.getElementById('taskDetailsModal')).hide();">
+                                <button type="button" class="btn btn-danger" onclick="phoneAgentWeb.stopHistoryTask('${task.task_id}'); bootstrap.Modal.getInstance(document.getElementById('taskDetailsModal')).hide();">
                                     <i class="fas fa-stop"></i> 停止任务
                                 </button>
                             ` : ''}
@@ -1257,26 +1475,253 @@ class PhoneAgentWeb {
         modal.show();
     }
 
-    getTimeAgo(timestamp) {
-        const now = new Date();
-        const time = new Date(timestamp);
-        const diff = Math.floor((now - time) / 1000); // 秒数差
+    // ========== 时间格式化相关函数 ==========
 
-        if (diff < 60) {
-            return '刚刚';
-        } else if (diff < 3600) {
-            return `${Math.floor(diff / 60)} 分钟前`;
-        } else if (diff < 86400) {
-            return `${Math.floor(diff / 3600)} 小时前`;
-        } else if (diff < 604800) {
-            return `${Math.floor(diff / 86400)} 天前`;
-        } else {
-            return time.toLocaleDateString();
+    /**
+     * 统一的日期时间格式化函数
+     * @param {string} timestamp - ISO格式的时间戳
+     * @param {Object} options - 格式化选项
+     * @returns {string} 格式化后的时间字符串
+     */
+    formatDateTime(timestamp, options = {}) {
+        // 调试：记录原始时间戳
+        console.log('[formatDateTime] 输入时间戳:', {
+            value: timestamp,
+            type: typeof timestamp,
+            length: timestamp ? timestamp.length : 'N/A'
+        });
+
+        // 验证时间戳
+        if (!timestamp) {
+            console.warn('[formatDateTime] 时间戳为空:', timestamp);
+            return options.defaultIfEmpty || '时间未知';
         }
+
+        // 清理时间戳字符串
+        let cleanTimestamp = timestamp;
+        if (typeof timestamp === 'string') {
+            cleanTimestamp = timestamp.trim();
+            // 移除可能的换行符
+            cleanTimestamp = cleanTimestamp.replace(/\n/g, '').replace(/\r/g, '');
+            console.log('[formatDateTime] 清理后的时间戳:', cleanTimestamp);
+        }
+
+        let date = new Date(cleanTimestamp);
+        let parseMethod = 'standard';
+
+        // 检查日期是否有效，如果无效则尝试通用解析器
+        if (isNaN(date.getTime())) {
+            console.log('[formatDateTime] 标准解析失败，尝试通用解析器...');
+
+            // 尝试使用通用解析器
+            if (window.parseAnyTimestamp) {
+                const fallbackDate = window.parseAnyTimestamp(timestamp);
+                if (fallbackDate) {
+                    date = fallbackDate;
+                    parseMethod = 'universal';
+                    console.log('[formatDateTime] 通用解析器成功:', fallbackDate);
+                } else {
+                    console.log('[formatDateTime] 通用解析器也失败了');
+                }
+            }
+
+            // 如果仍然无效
+            if (isNaN(date.getTime())) {
+                console.error('[formatDateTime] 无效的时间戳:', {
+                    original: timestamp,
+                    cleaned: cleanTimestamp,
+                    type: typeof timestamp,
+                    parsed: date.toString()
+                });
+
+            // 增强的降级显示
+            if (options.showOriginalOnError !== false) {
+                // 显示原始时间戳，便于调试
+                const originalStr = String(timestamp);
+                const shortOriginal = originalStr.length > 50 ?
+                    originalStr.substring(0, 47) + '...' : originalStr;
+
+                return `[${shortOriginal}] 时间格式错误`;
+            }
+
+            return options.defaultIfInvalid || '时间格式错误';
+        }
+        }
+
+        // 记录成功解析的信息
+        console.log('[formatDateTime] 解析成功:', {
+            method: parseMethod,
+            original: timestamp,
+            parsed: date
+        });
+
+        try {
+            // 获取时区偏移
+            const offset = -date.getTimezoneOffset();
+            const offsetHours = Math.floor(Math.abs(offset) / 60);
+            const offsetMinutes = Math.abs(offset) % 60;
+            const offsetSign = offset >= 0 ? '+' : '-';
+            const timezoneString = `UTC${offsetSign}${offsetHours.toString().padStart(2, '0')}:${offsetMinutes.toString().padStart(2, '0')}`;
+
+            // 格式化日期时间
+            const year = date.getFullYear();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const seconds = date.getSeconds().toString().padStart(2, '0');
+
+            if (options.includeSeconds !== false) {
+                return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} (${timezoneString})`;
+            } else {
+                return `${year}-${month}-${day} ${hours}:${minutes} (${timezoneString})`;
+            }
+        } catch (error) {
+            console.error('[formatDateTime] 格式化时出错:', error);
+            return options.defaultIfError || '格式化失败';
+        }
+    }
+
+    /**
+     * 格式化相对时间
+     * @param {string} timestamp - ISO格式的时间戳
+     * @returns {string} 相对时间描述
+     */
+    formatRelativeTime(timestamp) {
+        // 验证时间戳
+        if (!timestamp) {
+            console.warn('[formatRelativeTime] 时间戳为空:', timestamp);
+            return '时间未知';
+        }
+
+        // 清理时间戳
+        let cleanTimestamp = timestamp;
+        if (typeof timestamp === 'string') {
+            cleanTimestamp = timestamp.trim().replace(/\n/g, '').replace(/\r/g, '');
+        }
+
+        let date = new Date(cleanTimestamp);
+        let parseMethod = 'standard';
+
+        // 检查日期是否有效，如果无效则尝试通用解析器
+        if (isNaN(date.getTime())) {
+            console.log('[formatRelativeTime] 标准解析失败，尝试通用解析器...');
+
+            // 尝试使用通用解析器
+            if (window.parseAnyTimestamp) {
+                const fallbackDate = window.parseAnyTimestamp(timestamp);
+                if (fallbackDate) {
+                    date = fallbackDate;
+                    parseMethod = 'universal';
+                    console.log('[formatRelativeTime] 通用解析器成功:', fallbackDate);
+                } else {
+                    console.log('[formatRelativeTime] 通用解析器也失败了');
+                }
+            }
+
+            // 如果仍然无效
+            if (isNaN(date.getTime())) {
+                console.error('[formatRelativeTime] 无效的时间戳:', {
+                    original: timestamp,
+                    cleaned: cleanTimestamp,
+                    parsed: date.toString()
+                });
+
+                // 增强的降级显示
+                const originalStr = String(timestamp);
+                const shortOriginal = originalStr.length > 20 ?
+                    originalStr.substring(0, 17) + '...' : originalStr;
+
+                return `[${shortOriginal}] 时间错误`;
+            }
+        }
+
+        // 记录成功解析的信息
+        console.log('[formatRelativeTime] 解析成功:', {
+            method: parseMethod,
+            original: timestamp,
+            parsed: date
+        });
+
+        const now = new Date();
+        const diffMs = now - date;
+        const diff = Math.floor(diffMs / 1000); // 秒数差
+
+        // 检查时间戳是否在未来
+        if (diff < 0) {
+            return '未来时间';
+        }
+
+        // 计算相对时间
+        if (diff < 60) {
+            return diff <= 1 ? '刚刚' : `${diff} 秒前`;
+        } else if (diff < 3600) {
+            const minutes = Math.floor(diff / 60);
+            const seconds = diff % 60;
+            return seconds < 10 ? `${minutes} 分钟前` : `${minutes} 分${seconds} 秒前`;
+        } else if (diff < 86400) {
+            const hours = Math.floor(diff / 3600);
+            const minutes = Math.floor((diff % 3600) / 60);
+            return minutes === 0 ? `${hours} 小时前` : `${hours} 小时${minutes} 分前`;
+        } else if (diff < 604800) {
+            const days = Math.floor(diff / 86400);
+            const hours = Math.floor((diff % 86400) / 3600);
+            return hours === 0 ? `${days} 天前` : `${days} 天${hours} 小时前`;
+        } else {
+            // 超过7天显示具体日期
+            return date.toLocaleDateString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            });
+        }
+    }
+
+    /**
+     * 格式化完整的日期时间（用于标题和提示）
+     * @param {string} timestamp - ISO格式的时间戳
+     * @returns {string} 完整的时间信息
+     */
+    formatFullDateTime(timestamp) {
+        if (!timestamp) {
+            return '时间未知';
+        }
+
+        // 使用格式化函数（避免重复解析）
+        const localTime = this.formatDateTime(timestamp, { includeSeconds: false });
+
+        // 如果解析失败，返回错误信息
+        if (localTime === '时间未知' || localTime === '时间格式错误') {
+            return localTime;
+        }
+
+        // 解析UTC时间（使用清理后的时间戳）
+        let cleanTimestamp = timestamp;
+        if (typeof timestamp === 'string') {
+            cleanTimestamp = timestamp.trim().replace(/\n/g, '').replace(/\r/g, '');
+        }
+
+        const date = new Date(cleanTimestamp);
+        if (isNaN(date.getTime())) {
+            return localTime; // 返回本地时间，不添加UTC信息
+        }
+
+        // UTC时间
+        const utcTime = date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+
+        // 使用空格而不是换行符分隔（HTML title属性兼容）
+        return `${localTime} | UTC: ${utcTime}`;
+    }
+
+    getTimeAgo(timestamp) {
+        // 使用新的统一格式化函数
+        return this.formatRelativeTime(timestamp);
     }
 
     showTaskHistoryLoading(show) {
         const container = document.getElementById('task-history-list');
+        if (!container) return;
+
         if (show) {
             container.innerHTML = `
                 <div class="text-center">
@@ -1287,6 +1732,32 @@ class PhoneAgentWeb {
                 </div>
             `;
         }
+    }
+
+    showTaskHistoryError(error) {
+        const container = document.getElementById('task-history-list');
+        if (!container) {
+            console.error('Task history container element not found');
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="text-center text-danger py-5">
+                <div class="mb-3">
+                    <i class="fas fa-exclamation-triangle fa-3x opacity-50"></i>
+                </div>
+                <h5 class="mb-2">加载任务历史失败</h5>
+                <p class="small mb-3">${error}</p>
+                <button class="btn btn-primary btn-sm" onclick="phoneAgentWeb.loadTaskHistory()">
+                    <i class="fas fa-redo"></i> 重试
+                </button>
+                <div class="mt-3">
+                    <small class="text-muted">
+                        请检查网络连接或<a href="#" onclick="location.reload()">刷新页面</a>
+                    </small>
+                </div>
+            </div>
+        `;
     }
 
     viewTaskReport(taskId) {
@@ -1938,3 +2409,289 @@ function refreshTaskHistory() {
         window.phoneAgentWeb.loadTaskHistory();
     }
 }
+
+// 调试工具 - 时间戳深度分析
+window.debugTimestamps = async function() {
+    console.group('🛠️ [调试工具] 时间戳深度分析');
+
+    try {
+        // 获取任务数据
+        const response = await fetch('/api/tasks');
+        if (!response.ok) {
+            console.error('无法获取任务数据:', response.status);
+            return;
+        }
+
+        const data = await response.json();
+        const tasks = data.data?.tasks || [];
+
+        console.log('=== 任务时间戳分析报告 ===');
+        console.log(`总任务数: ${tasks.length}`);
+        console.log('');
+
+        if (tasks.length === 0) {
+            console.log('没有任务数据可分析');
+            console.groupEnd();
+            return;
+        }
+
+        // 分析每个任务的时间戳
+        const analysis = tasks.map((task, index) => {
+            const timestamp = task.start_time;
+            console.log(`--- 任务 ${index + 1}: ${task.task_id} ---`);
+            console.log('原始时间戳:', timestamp);
+            console.log('数据类型:', typeof timestamp);
+
+            // 测试多种解析方法
+            const results = {
+                original: timestamp,
+                type: typeof timestamp,
+                methods: {}
+            };
+
+            // 方法1: 直接new Date()
+            try {
+                const direct = new Date(timestamp);
+                results.methods.direct = {
+                    result: direct,
+                    isValid: !isNaN(direct.getTime()),
+                    string: direct.toString(),
+                    iso: direct.toISOString()
+                };
+                console.log('直接解析:', results.methods.direct.isValid ? '✅' : '❌', results.methods.direct.string);
+            } catch (e) {
+                results.methods.direct = { error: e.message };
+                console.log('直接解析: ❌ 错误:', e.message);
+            }
+
+            // 方法2: 清理后解析（移除可能的Z后缀）
+            try {
+                const cleaned = timestamp.toString().replace('Z', '');
+                const cleanedDate = new Date(cleaned);
+                results.methods.cleaned = {
+                    result: cleanedDate,
+                    isValid: !isNaN(cleanedDate.getTime()),
+                    string: cleanedDate.toString(),
+                    cleaned: cleaned
+                };
+                console.log('清理后解析:', results.methods.cleaned.isValid ? '✅' : '❌', results.methods.cleaned.string);
+            } catch (e) {
+                results.methods.cleaned = { error: e.message };
+                console.log('清理后解析: ❌ 错误:', e.message);
+            }
+
+            // 方法3: 数字类型检查
+            const numValue = Number(timestamp);
+            if (!isNaN(numValue)) {
+                try {
+                    const numDate = new Date(numValue);
+                    // 判断是毫秒还是秒
+                    const isMs = numValue > 1000000000000; // 大于这个值认为是毫秒
+                    const adjustedDate = isMs ? numDate : new Date(numValue * 1000);
+
+                    results.methods.numeric = {
+                        result: adjustedDate,
+                        isValid: !isNaN(adjustedDate.getTime()),
+                        string: adjustedDate.toString(),
+                        isMs: isMs,
+                        numericValue: numValue
+                    };
+                    console.log('数字解析:', results.methods.numeric.isValid ? '✅' : '❌',
+                              `${results.methods.numeric.string} (${isMs ? 'ms' : 's'})`);
+                } catch (e) {
+                    results.methods.numeric = { error: e.message };
+                    console.log('数字解析: ❌ 错误:', e.message);
+                }
+            } else {
+                console.log('数字解析: ❌ 不是数字');
+                results.methods.numeric = { error: '不是数字' };
+            }
+
+            // 方法4: Base64解码尝试
+            try {
+                const decoded = atob(timestamp);
+                const base64Date = new Date(decoded);
+                results.methods.base64 = {
+                    result: base64Date,
+                    isValid: !isNaN(base64Date.getTime()),
+                    string: base64Date.toString(),
+                    decoded: decoded
+                };
+                console.log('Base64解码:', results.methods.base64.isValid ? '✅' : '❌',
+                          results.methods.base64.isValid ? results.methods.base64.string : '无效');
+            } catch (e) {
+                results.methods.base64 = { error: e.message };
+                console.log('Base64解码: ❌ 不是Base64格式');
+            }
+
+            // 检查是否有有效的方法
+            const validMethods = Object.values(results.methods).filter(m => m.isValid);
+            results.hasValidMethod = validMethods.length > 0;
+            results.bestMethod = validMethods[0] || null;
+
+            console.log('最佳方法:', results.bestMethod ? '✅ 找到' : '❌ 无效');
+            console.log('');
+
+            return results;
+        });
+
+        // 生成总结报告
+        console.log('=== 总结报告 ===');
+        const validTasks = analysis.filter(a => a.hasValidMethod);
+        const invalidTasks = analysis.filter(a => !a.hasValidMethod);
+
+        console.log(`有效时间戳: ${validTasks.length}/${tasks.length}`);
+        console.log(`无效时间戳: ${invalidTasks.length}/${tasks.length}`);
+
+        if (invalidTasks.length > 0) {
+            console.log('\n无效时间戳的任务:');
+            invalidTasks.forEach(a => {
+                console.log(`- ${a.original} (${a.type})`);
+            });
+        }
+
+        // 提供复制功能
+        console.log('\n=== 复制到剪贴板 ===');
+        const reportData = {
+            summary: {
+                total: tasks.length,
+                valid: validTasks.length,
+                invalid: invalidTasks.length
+            },
+            analysis: analysis,
+            timestamp: new Date().toISOString()
+        };
+
+        // 创建可复制的JSON字符串
+        const jsonString = JSON.stringify(reportData, null, 2);
+        console.log('复制以下命令到剪贴板来导出完整报告:');
+        console.log('copy(' + JSON.stringify(jsonString) + ')');
+
+        // 自动复制到剪贴板
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(jsonString).then(() => {
+                console.log('✅ 报告已自动复制到剪贴板');
+            }).catch(() => {
+                console.log('❌ 自动复制失败，请手动复制上面的命令');
+            });
+        }
+
+    } catch (error) {
+        console.error('调试工具执行出错:', error);
+    }
+
+    console.groupEnd();
+};
+
+// 通用时间戳解析器
+window.parseAnyTimestamp = function(timestamp) {
+    console.group('🔧 [通用解析器] 解析时间戳');
+    console.log('输入:', timestamp, '类型:', typeof timestamp);
+
+    const results = [];
+
+    // 尝试1: 直接解析
+    try {
+        const direct = new Date(timestamp);
+        if (!isNaN(direct.getTime())) {
+            results.push({ method: 'direct', date: direct, confidence: 5 });
+            console.log('✅ 直接解析成功:', direct);
+        }
+    } catch (e) {
+        console.log('❌ 直接解析失败:', e.message);
+    }
+
+    // 尝试2: 清理Z后缀
+    if (typeof timestamp === 'string') {
+        const cleaned = timestamp.replace('Z', '');
+        try {
+            const cleanedDate = new Date(cleaned);
+            if (!isNaN(cleanedDate.getTime())) {
+                results.push({ method: 'cleaned', date: cleanedDate, confidence: 4 });
+                console.log('✅ 清理后解析成功:', cleanedDate);
+            }
+        } catch (e) {
+            console.log('❌ 清理后解析失败:', e.message);
+        }
+    }
+
+    // 尝试3: 数字解析（毫秒/秒）
+    const numValue = Number(timestamp);
+    if (!isNaN(numValue) && numValue > 0) {
+        try {
+            const isMs = numValue > 1000000000000;
+            const adjustedValue = isMs ? numValue : numValue * 1000;
+            const numDate = new Date(adjustedValue);
+            if (!isNaN(numDate.getTime())) {
+                results.push({
+                    method: 'numeric',
+                    date: numDate,
+                    confidence: 3,
+                    details: `作为${isMs ? '毫秒' : '秒'}处理`
+                });
+                console.log('✅ 数字解析成功:', numDate, `(${isMs ? '毫秒' : '秒'})`);
+            }
+        } catch (e) {
+            console.log('❌ 数字解析失败:', e.message);
+        }
+    }
+
+    // 尝试4: Base64解码
+    if (typeof timestamp === 'string' && timestamp.length > 4) {
+        try {
+            const decoded = atob(timestamp);
+            const base64Date = new Date(decoded);
+            if (!isNaN(base64Date.getTime())) {
+                results.push({
+                    method: 'base64',
+                    date: base64Date,
+                    confidence: 2,
+                    details: `解码为: ${decoded}`
+                });
+                console.log('✅ Base64解析成功:', base64Date);
+            }
+        } catch (e) {
+            console.log('❌ Base64解析失败:', e.message);
+        }
+    }
+
+    // 尝试5: 特殊格式处理
+    if (typeof timestamp === 'string') {
+        // 处理可能的格式如 "/Date(1234567890)/"
+        const dateMatch = timestamp.match(/\/Date\((\d+)\)\//);
+        if (dateMatch) {
+            try {
+                const dotNetDate = new Date(parseInt(dateMatch[1]));
+                if (!isNaN(dotNetDate.getTime())) {
+                    results.push({
+                        method: 'dotnet',
+                        date: dotNetDate,
+                        confidence: 3,
+                        details: 'ASP.NET MVC格式'
+                    });
+                    console.log('✅ .NET格式解析成功:', dotNetDate);
+                }
+            } catch (e) {
+                console.log('❌ .NET格式解析失败:', e.message);
+            }
+        }
+    }
+
+    // 选择最佳结果（按置信度排序）
+    const bestResult = results.sort((a, b) => b.confidence - a.confidence)[0];
+
+    if (bestResult) {
+        console.log(`🎯 最佳解析方法: ${bestResult.method}`, bestResult.date, bestResult.details || '');
+        console.groupEnd();
+        return bestResult.date;
+    } else {
+        console.log('❌ 所有解析方法都失败了');
+        console.groupEnd();
+        return null;
+    }
+};
+
+// 添加到控制台的帮助信息
+console.log('🛠️ 时间戳调试工具已加载！');
+console.log('使用 debugTimestamps() 分析所有任务的时间戳');
+console.log('使用 parseAnyTimestamp(timestamp) 解析单个时间戳');

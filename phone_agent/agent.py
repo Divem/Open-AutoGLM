@@ -18,6 +18,7 @@ from phone_agent.config import get_messages, get_system_prompt
 from phone_agent.model import ModelClient, ModelConfig
 from phone_agent.model.client import MessageBuilder
 from phone_agent.recorder import ScriptRecorder
+from phone_agent.stop_handler import StopSignalHandler, StopException, StopReason
 
 # Import step tracker
 try:
@@ -144,7 +145,12 @@ class PhoneAgent:
         # Store task_id if provided, otherwise will be generated in run()
         self._task_id = task_id
 
-        self.model_client = ModelClient(self.model_config)
+        # Initialize stop signal handler BEFORE other components
+        self.stop_handler = StopSignalHandler()
+        if self.agent_config.verbose:
+            logger.info("✅ Stop signal handler initialized")
+
+        self.model_client = ModelClient(self.model_config, stop_handler=self.stop_handler)
         self.action_handler = ActionHandler(
             device_id=self.agent_config.device_id,
             confirmation_callback=confirmation_callback,
@@ -210,6 +216,8 @@ class PhoneAgent:
 
         try:
             # First step with user prompt
+            # Check for stop before first step
+            self.check_stop()
             result = self._execute_step(task, is_first=True, step_callback=step_callback)
 
             if result.finished:
@@ -220,6 +228,8 @@ class PhoneAgent:
 
             # Continue until finished or max steps reached
             while self._step_count < self.agent_config.max_steps:
+                # Check for stop at the beginning of each iteration
+                self.check_stop()
                 result = self._execute_step(is_first=False, step_callback=step_callback)
 
                 if result.finished:
@@ -233,6 +243,14 @@ class PhoneAgent:
                 self._save_script()
             return "Max steps reached"
 
+        except StopException as e:
+            # Task was stopped by user
+            if self.agent_config.verbose:
+                logger.info(f"🛑 Task stopped: {e}")
+            if self.recorder:
+                self.recorder.finish_recording(False)
+                self._save_script()
+            return str(e)
         except Exception as e:
             if self.recorder:
                 self.recorder.finish_recording(False)
@@ -262,6 +280,41 @@ class PhoneAgent:
         """Reset the agent state for a new task."""
         self._context = []
         self._step_count = 0
+
+    def stop(self, reason: StopReason = StopReason.USER_REQUEST, message: str | None = None) -> None:
+        """
+        停止任务执行
+
+        Args:
+            reason: 停止原因
+            message: 停止消息
+        """
+        if self.agent_config.verbose:
+            logger.info(f"🛑 Stopping task: {reason.value} - {message or ''}")
+
+        self.stop_handler.stop(reason, message)
+
+        # 停止录制
+        if self.recorder:
+            self.recorder.stop()
+
+    def should_stop(self) -> bool:
+        """
+        检查是否应该停止
+
+        Returns:
+            bool: 如果应该停止返回True
+        """
+        return self.stop_handler.should_stop()
+
+    def check_stop(self) -> None:
+        """
+        检查停止状态，如果需要停止则抛出异常
+
+        Raises:
+            StopException: 如果任务应该停止
+        """
+        self.stop_handler.check_stop()
 
     def _execute_step(
         self, user_prompt: str | None = None, is_first: bool = False, step_callback: Callable[[dict], None] = None
@@ -299,7 +352,14 @@ class PhoneAgent:
 
         # Get model response
         try:
+            # Check for stop before AI call
+            self.check_stop()
             response = self.model_client.request(self._context)
+            # Check for stop after AI call
+            self.check_stop()
+        except StopException:
+            # Re-raise StopException without wrapping
+            raise
         except Exception as e:
             if self.agent_config.verbose:
                 traceback.print_exc()
@@ -344,9 +404,17 @@ class PhoneAgent:
 
         # Execute action
         try:
+            # Check for stop before action execution
+            self.check_stop()
             result = self.action_handler.execute(
                 action, screenshot.width, screenshot.height
             )
+            # Check for stop after action execution
+            self.check_stop()
+        except StopException:
+            # Re-raise StopException without wrapping
+            raise
+        except Exception as e:
             # Update step recording with execution result
             if self.recorder and action.get("_metadata") != "finish":
                 self.recorder.steps[-1].success = result.success
