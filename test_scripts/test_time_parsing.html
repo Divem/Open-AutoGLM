@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>时间解析测试</title>
+</head>
+<body>
+    <h1>时间解析测试</h1>
+    <div id="results"></div>
+
+    <script>
+        const testTimestamps = [
+            "2025-12-15T19:17:30.242790+00:00",
+            "2025-12-15T15:46:44.743211+00:00",
+            "2025-12-15T15:35:52.220469+00:00",
+            "2025-12-15T15:13:46.481582+00:00"
+        ];
+
+        function getTimeAgo(timestamp) {
+            const now = new Date();
+            const time = new Date(timestamp);
+            const diff = Math.floor((now - time) / 1000);
+
+            console.log(`原始时间戳: ${timestamp}`);
+            console.log(`解析后的时间: ${time}`);
+            console.log(`当前时间: ${now}`);
+            console.log(`时间差(秒): ${diff}`);
+
+            if (diff < 60) {
+                return '刚刚';
+            } else if (diff < 3600) {
+                return `${Math.floor(diff / 60)} 分钟前`;
+            } else if (diff < 86400) {
+                return `${Math.floor(diff / 3600)} 小时前`;
+            } else if (diff < 604800) {
+                return `${Math.floor(diff / 86400)} 天前`;
+            } else {
+                return time.toLocaleDateString();
+            }
+        }
+
+        const results = document.getElementById('results');
+        testTimestamps.forEach(timestamp => {
+            const timeAgo = getTimeAgo(timestamp);
+            const div = document.createElement('div');
+            div.innerHTML = `<p><strong>${timestamp}</strong> -> ${timeAgo}</p>`;
+            results.appendChild(div);
+        });
+    </script>
+</body>
+</html>

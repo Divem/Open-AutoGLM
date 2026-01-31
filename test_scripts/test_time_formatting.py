@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""
+测试时间格式化功能的简单脚本
+"""
+
+import subprocess
+import json
+import sys
+import time
+
+def test_time_formatting():
+    """测试时间格式化函数"""
+
+    # 创建一个简单的HTML测试页面
+    test_html = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>时间格式化测试</title>
+</head>
+<body>
+    <h1>时间格式化测试</h1>
+    <div id="test-results"></div>
+
+    <script src="web/static/js/app.js"></script>
+    <script>
+        // 模拟PhoneAgentWeb类的相关方法
+        class TestPhoneAgentWeb {
+            constructor() {
+                // 复制时间格式化相关的方法
+            }
+
+            // 从app.js复制的方法
+            formatDateTime(timestamp, options = {}) {
+                if (!timestamp) {
+                    console.warn('[formatDateTime] 时间戳为空:', timestamp);
+                    return '时间未知';
+                }
+
+                try {
+                    let cleanTimestamp = timestamp;
+                    // 清理时间戳格式
+                    if (typeof timestamp === 'string') {
+                        // 移除所有非数字字符（保留减号、冒号、T、Z、点、加号）
+                        cleanTimestamp = timestamp.replace(/[^\d\-T:Z\.+]/g, '');
+                        console.log('[formatDateTime] 清理后的时间戳:', cleanTimestamp);
+                    }
+
+                    let date;
+                    // 尝试使用标准的Date构造函数
+                    try {
+                        date = new Date(cleanTimestamp);
+                        if (isNaN(date.getTime())) {
+                            throw new Error('标准解析失败');
+                        }
+                    } catch (error) {
+                        console.log('[formatDateTime] 标准解析失败，尝试通用解析器...');
+
+                        // 更通用的解析方法
+                        date = this.parseDateManually(cleanTimestamp);
+                        if (!date) {
+                            throw new Error('通用解析器也失败了');
+                        }
+                    }
+
+                    console.log('[formatDateTime] 解析成功:', {
+                        input: timestamp,
+                        cleaned: cleanTimestamp,
+                        date: date.toISOString(),
+                        isValid: !isNaN(date.getTime())
+                    });
+
+                    if (isNaN(date.getTime())) {
+                        throw new Error('解析后的日期无效');
+                    }
+
+                    // 获取时区信息
+                    const timeZoneOffset = date.getTimezoneOffset();
+                    const timeZoneHours = Math.floor(Math.abs(timeZoneOffset) / 60);
+                    const timeZoneMinutes = Math.abs(timeZoneOffset) % 60;
+                    const timeZoneSign = timeZoneOffset <= 0 ? '+' : '-';
+                    const timeZoneStr = `UTC${timeZoneSign}${timeZoneHours.toString().padStart(2, '0')}:${timeZoneMinutes.toString().padStart(2, '0')}`;
+
+                    // 格式化选项
+                    const includeSeconds = options.includeSeconds !== false;
+                    const includeTimeZone = options.includeTimeZone !== false;
+
+                    let formatStr = includeSeconds
+                        ? `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
+                        : `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+                    if (includeTimeZone) {
+                        formatStr += ` (${timeZoneStr})`;
+                    }
+
+                    return formatStr;
+                } catch (error) {
+                    console.error('[formatDateTime] 格式化时出错:', error);
+                    return '时间格式错误';
+                }
+            }
+
+            parseDateManually(timestamp) {
+                // 手动解析时间戳的通用方法
+                try {
+                    // 尝试ISO格式
+                    if (timestamp.includes('T') || timestamp.includes('-')) {
+                        const date = new Date(timestamp);
+                        if (!isNaN(date.getTime())) {
+                            return date;
+                        }
+                    }
+
+                    // 尝试Unix时间戳（毫秒）
+                    if (/^\\d{13}$/.test(timestamp)) {
+                        const date = new Date(parseInt(timestamp));
+                        if (!isNaN(date.getTime())) {
+                            return date;
+                        }
+                    }
+
+                    // 尝试Unix时间戳（秒）
+                    if (/^\\d{10}$/.test(timestamp)) {
+                        const date = new Date(parseInt(timestamp) * 1000);
+                        if (!isNaN(date.getTime())) {
+                            return date;
+                        }
+                    }
+
+                    // 尝试宽松解析
+                    const date = new Date(timestamp);
+                    if (!isNaN(date.getTime())) {
+                        return date;
+                    }
+
+                    return null;
+                } catch (error) {
+                    return null;
+                }
+            }
+
+            formatRelativeTime(timestamp) {
+                if (!timestamp) {
+                    console.warn('[formatRelativeTime] 时间戳为空:', timestamp);
+                    return '时间未知';
+                }
+
+                try {
+                    let cleanTimestamp = timestamp;
+                    if (typeof timestamp === 'string') {
+                        cleanTimestamp = timestamp.replace(/[^\\d\\-T:Z\\.+-]/g, '');
+                    }
+
+                    let date;
+                    try {
+                        date = new Date(cleanTimestamp);
+                        if (isNaN(date.getTime())) {
+                            throw new Error('标准解析失败');
+                        }
+                    } catch (error) {
+                        console.log('[formatRelativeTime] 标准解析失败，尝试通用解析器...');
+                        date = this.parseDateManually(cleanTimestamp);
+                        if (!date) {
+                            throw new Error('通用解析器也失败了');
+                        }
+                    }
+
+                    console.log('[formatRelativeTime] 解析成功:', {
+                        input: timestamp,
+                        cleaned: cleanTimestamp,
+                        date: date.toISOString(),
+                        isValid: !isNaN(date.getTime())
+                    });
+
+                    if (isNaN(date.getTime())) {
+                        throw new Error('解析后的日期无效');
+                    }
+
+                    const now = new Date();
+                    const diffMs = now - date;
+                    const diffSeconds = Math.floor(diffMs / 1000);
+                    const diffMinutes = Math.floor(diffSeconds / 60);
+                    const diffHours = Math.floor(diffMinutes / 60);
+                    const diffDays = Math.floor(diffHours / 24);
+
+                    if (diffSeconds < 60) {
+                        return diffSeconds <= 0 ? '刚刚' : `${diffSeconds}秒前`;
+                    } else if (diffMinutes < 60) {
+                        return `${diffMinutes}分钟前`;
+                    } else if (diffHours < 24) {
+                        return `${diffHours}小时前`;
+                    } else if (diffDays < 7) {
+                        return `${diffDays}天前`;
+                    } else {
+                        // 超过一周显示具体日期
+                        return this.formatDateTime(timestamp, { includeSeconds: false });
+                    }
+                } catch (error) {
+                    console.error('[formatRelativeTime] 格式化时出错:', error);
+                    return '时间格式错误';
+                }
+            }
+
+            formatFullDateTime(timestamp) {
+                if (!timestamp) {
+                    return '时间未知';
+                }
+
+                try {
+                    // 解析时间戳
+                    let cleanTimestamp = timestamp;
+                    if (typeof timestamp === 'string') {
+                        cleanTimestamp = timestamp.replace(/[^\\d\\-T:Z\\.+-]/g, '');
+                    }
+
+                    let date;
+                    try {
+                        date = new Date(cleanTimestamp);
+                        if (isNaN(date.getTime())) {
+                            date = this.parseDateManually(cleanTimestamp);
+                        }
+                    } catch (error) {
+                        date = this.parseDateManually(cleanTimestamp);
+                    }
+
+                    if (!date || isNaN(date.getTime())) {
+                        throw new Error('无法解析时间戳');
+                    }
+
+                    // 本地时间格式化
+                    const localTime = this.formatDateTime(timestamp, { includeSeconds: false });
+
+                    // UTC时间格式化
+                    const utcYear = date.getUTCFullYear();
+                    const utcMonth = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+                    const utcDay = date.getUTCDate().toString().padStart(2, '0');
+                    const utcHours = date.getUTCHours().toString().padStart(2, '0');
+                    const utcMinutes = date.getUTCMinutes().toString().padStart(2, '0');
+                    const utcSeconds = date.getUTCSeconds().toString().padStart(2, '0');
+                    const utcTime = `${utcYear}-${utcMonth}-${utcDay} ${utcHours}:${utcMinutes}:${utcSeconds} UTC`;
+
+                    return `${localTime} | ${utcTime}`;
+                } catch (error) {
+                    console.error('[formatFullDateTime] 格式化时出错:', error);
+                    return '时间格式错误';
+                }
+            }
+        }
+
+        // 运行测试
+        const tester = new TestPhoneAgentWeb();
+        const testCases = [
+            '2024-12-15T14:30:00.123Z',
+            '2024-12-15 14:30:00',
+            '1703326200000',
+            '1703326200',
+            'invalid-date',
+            null,
+            '',
+            new Date().toISOString()
+        ];
+
+        let results = '<h2>测试结果:</h2>';
+
+        testCases.forEach((testCase, index) => {
+            results += `<h3>测试用例 ${index + 1}: ${testCase}</h3>`;
+            results += `<p><strong>formatDateTime:</strong> ${tester.formatDateTime(testCase)}</p>`;
+            results += `<p><strong>formatRelativeTime:</strong> ${tester.formatRelativeTime(testCase)}</p>`;
+            results += `<p><strong>formatFullDateTime:</strong> ${tester.formatFullDateTime(testCase)}</p>`;
+            results += '<hr>';
+        });
+
+        document.getElementById('test-results').innerHTML = results;
+    </script>
+</body>
+</html>
+    """
+
+    # 写入测试文件
+    with open('test_time_formatting.html', 'w', encoding='utf-8') as f:
+        f.write(test_html)
+
+    print("测试文件已创建: test_time_formatting.html")
+    print("请在浏览器中打开此文件来测试时间格式化功能")
+
+if __name__ == "__main__":
+    test_time_formatting()

@@ -284,11 +284,18 @@ class PhoneAgentWeb {
         this.addMessage('system', `开始执行任务: ${data.task}`);
         this.updateTaskStatus('running', data.task);
         this.showToast('任务开始执行', 'info');
+
+        // Reset step limit warning flags
+        this.warningShown = false;
+        this.criticalWarningShown = false;
     }
 
     onStepUpdate(data) {
         this.stepCount++;
         const step = data.step;
+
+        // Check for step limit warnings
+        this.checkStepLimitWarning();
 
         // Create step message
         let stepMessage = '';
@@ -327,10 +334,52 @@ class PhoneAgentWeb {
     }
 
     onTaskCompleted(data) {
-        this.addMessage('assistant', data.result);
-        this.updateTaskStatus('completed');
+        // 处理不同类型的任务完成状态
+        const status = data.status || 'completed';
+        const reason = data.reason || data.completion_reason || '';
+        const result = data.result || '';
+
+        // 根据完成原因显示不同的消息
+        let statusMessage = result;
+        let toastMessage = '任务执行完成';
+        let toastType = 'success';
+        let taskStatus = 'completed';
+
+        if (reason === 'max_steps_reached') {
+            statusMessage = `任务因达到最大步骤限制而停止：${result}`;
+            toastMessage = `任务已停止（达到最大步骤限制）`;
+            toastType = 'warning';
+            taskStatus = 'stopped';
+        } else if (reason === 'error') {
+            statusMessage = `任务执行出错：${result}`;
+            toastMessage = '任务执行失败';
+            toastType = 'error';
+            taskStatus = 'error';
+        } else if (reason === 'stopped') {
+            statusMessage = `任务已停止：${result}`;
+            toastMessage = '任务已停止';
+            toastType = 'warning';
+            taskStatus = 'stopped';
+        }
+
+        // 添加结果消息到聊天
+        this.addMessage('assistant', statusMessage);
+
+        // 更新任务状态
+        this.updateTaskStatus(taskStatus);
         this.setInputEnabled(true);
-        this.showToast('任务执行完成', 'success');
+
+        // 显示完成通知
+        this.showToast(toastMessage, toastType);
+
+        // 如果是最大步骤场景，添加额外的提示信息
+        if (reason === 'max_steps_reached') {
+            setTimeout(() => {
+                const stepCount = data.step_count || '未知';
+                const maxSteps = data.max_steps || '未知';
+                this.showToast(`执行了 ${stepCount}/${maxSteps} 步骤。可以查看报告或调整步骤限制后重试。`, 'info');
+            }, 2000);
+        }
     }
 
     onTaskError(data) {
@@ -525,9 +574,13 @@ class PhoneAgentWeb {
         const taskElement = document.getElementById('current-task');
         const progressBar = document.getElementById('task-progress');
 
-        // Update status badge
+        // Update status badge with enhanced styling
         statusElement.className = 'badge status-badge ' + status;
         statusElement.textContent = this.getStatusText(status);
+
+        // Add status icon
+        const statusIcon = this.getStatusIcon(status);
+        statusElement.innerHTML = `<i class="${statusIcon} me-1"></i>${this.getStatusText(status)}`;
 
         // Update current task
         if (task) {
@@ -535,19 +588,32 @@ class PhoneAgentWeb {
             taskElement.title = task;
         }
 
-        // Update progress bar
+        // Update progress bar with enhanced states
         if (status === 'running') {
             progressBar.style.width = '50%';
             progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+            progressBar.setAttribute('aria-valuenow', '50');
+            progressBar.setAttribute('aria-label', '任务执行中...');
         } else if (status === 'completed') {
             progressBar.style.width = '100%';
             progressBar.className = 'progress-bar bg-success';
+            progressBar.setAttribute('aria-valuenow', '100');
+            progressBar.setAttribute('aria-label', '任务完成');
+        } else if (status === 'stopped') {
+            progressBar.style.width = '75%';
+            progressBar.className = 'progress-bar bg-warning';
+            progressBar.setAttribute('aria-valuenow', '75');
+            progressBar.setAttribute('aria-label', '任务已停止');
         } else if (status === 'error') {
             progressBar.style.width = '100%';
             progressBar.className = 'progress-bar bg-danger';
+            progressBar.setAttribute('aria-valuenow', '100');
+            progressBar.setAttribute('aria-label', '任务执行出错');
         } else {
             progressBar.style.width = '0%';
             progressBar.className = 'progress-bar';
+            progressBar.setAttribute('aria-valuenow', '0');
+            progressBar.setAttribute('aria-label', '任务状态: ' + this.getStatusText(status));
         }
     }
 
@@ -1038,7 +1104,10 @@ class PhoneAgentWeb {
             const response = await fetch('/api/config');
             if (response.ok) {
                 const configs = await response.json();
-                return configs.default || {};
+                const config = configs.default || {};
+                // Store max steps for warning system
+                this.maxSteps = config.max_steps || 100;
+                return config;
             }
         } catch (error) {
             console.error('Error loading config:', error);
@@ -1101,6 +1170,17 @@ class PhoneAgentWeb {
             'system': 'fas fa-cog'
         };
         return icons[role] || 'fas fa-comment';
+    }
+
+    getStatusIcon(status) {
+        const icons = {
+            'idle': 'fas fa-coffee',
+            'running': 'fas fa-play fa-spin',
+            'completed': 'fas fa-check-circle',
+            'error': 'fas fa-exclamation-triangle',
+            'stopped': 'fas fa-stop-circle'
+        };
+        return icons[status] || 'fas fa-question-circle';
     }
 
     getStatusText(status) {
@@ -1348,7 +1428,7 @@ class PhoneAgentWeb {
                             ${task.task_description ? task.task_description.substring(0, 30) + (task.task_description.length > 30 ? '...' : '') : '无任务描述'}
                         </div>
                         <span class="task-status bg-${statusClass === 'running' ? 'success' : statusClass === 'completed' ? 'primary' : statusClass === 'error' ? 'danger' : statusClass === 'stopped' ? 'warning' : 'secondary'} text-white">
-                            ${statusText}
+                            <i class="${this.getStatusIcon(statusClass)} me-1"></i>${statusText}
                         </span>
                     </div>
                     ${task.task_description && task.task_description.length > 30 ? `<div class="task-description">${task.task_description}</div>` : ''}
@@ -1763,6 +1843,29 @@ class PhoneAgentWeb {
     viewTaskReport(taskId) {
         // 在新窗口中打开任务报告页面
         window.open(`/tasks/${taskId}/report`, '_blank');
+    }
+
+    checkStepLimitWarning() {
+        // Default maximum steps (can be overridden by config)
+        const maxSteps = this.maxSteps || 100;
+        const warningRatio = 0.8; // 80% threshold
+        const criticalRatio = 0.95; // 95% threshold
+
+        const currentRatio = this.stepCount / maxSteps;
+
+        if (currentRatio >= criticalRatio && !this.criticalWarningShown) {
+            this.criticalWarningShown = true;
+            this.showToast(
+                `⚠️ 关键警告：已执行 ${this.stepCount}/${maxSteps} 步骤，即将达到最大限制！`,
+                'warning'
+            );
+        } else if (currentRatio >= warningRatio && !this.warningShown) {
+            this.warningShown = true;
+            this.showToast(
+                `📊 步骤提醒：已执行 ${this.stepCount}/${maxSteps} 步骤，还剩 ${maxSteps - this.stepCount} 步`,
+                'info'
+            );
+        }
     }
 
     showToast(message, type = 'info') {

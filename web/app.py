@@ -1247,26 +1247,8 @@ class PhoneAgentWeb:
                 except Exception as script_error:
                     print(f"Failed to save script to database: {script_error}")
 
-            # Update session and global task
-            session_data.task_status = 'completed'
-            session_data.last_activity = datetime.now()
-            global_task_manager.update_task_status(task_id, 'completed', result=str(result))
-
-            # Add result to conversation
-            session_data.conversation_history.append({
-                'role': 'assistant',
-                'content': str(result),
-                'timestamp': datetime.now().isoformat()
-            })
-
-            # Notify completion
-            self.socketio.emit('task_completed', {
-                'session_id': session_id,
-                'result': str(result),
-                'task_id': task_id,
-                'script_id': script_id,  # Include script_id in response
-                'timestamp': datetime.now().isoformat()
-            }, room=session_id)
+            # Handle task completion with structured result processing
+            self._handle_task_completion(session_data, task_id, result, script_id)
 
         except StopException as e:
             # Task was stopped by user
@@ -1390,6 +1372,125 @@ class PhoneAgentWeb:
         except Exception:
             return str(result)
 
+    def _handle_task_completion(self, session_data, task_id: str, result, script_id: str = None):
+        """Handle task completion with proper status update based on result type"""
+        try:
+            from phone_agent.agent import StepResult  # Import StepResult here
+
+            # Determine task status and message based on result type
+            status = 'completed'
+            message = str(result)
+            error_message = None
+
+            if isinstance(result, StepResult):
+                # Handle structured StepResult
+                if result.reason == 'max_steps_reached':
+                    status = 'stopped'
+                    message = f"Task stopped: Maximum steps reached ({result.step_count}/{result.max_steps})"
+                    error_message = f"Task stopped: Maximum steps reached ({result.step_count}/{result.max_steps})"
+                elif result.reason == 'error':
+                    status = 'error'
+                    message = f"Task failed: {result.message}"
+                    error_message = result.message
+                elif result.reason == 'stopped':
+                    status = 'stopped'
+                    message = f"Task stopped: {result.message}"
+                    error_message = result.message
+
+                # Log detailed completion info
+                logger.info(f"Task {task_id} completed: status={status}, reason={result.reason}, steps={result.step_count}/{result.max_steps}")
+
+                # Include structured data in WebSocket notification
+                completion_data = {
+                    'session_id': session_data.session_id,
+                    'result': str(result),
+                    'task_id': task_id,
+                    'status': status,
+                    'reason': result.reason,
+                    'step_count': result.step_count,
+                    'max_steps': result.max_steps,
+                    'execution_time': result.execution_time,
+                    'script_id': script_id,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                # Handle legacy string results
+                logger.info(f"Task {task_id} completed with legacy result: status={status}")
+
+                # Try to detect if it's a max steps scenario from string
+                result_str = str(result)
+                if "Max steps reached" in result_str:
+                    status = 'stopped'
+                    message = result_str
+                    error_message = "Maximum steps reached"
+                    logger.info(f"Detected max steps scenario from legacy result string")
+
+                completion_data = {
+                    'session_id': session_data.session_id,
+                    'result': result_str,
+                    'task_id': task_id,
+                    'status': status,
+                    'script_id': script_id,
+                    'timestamp': datetime.now().isoformat()
+                }
+
+            # Update session and global task status with detailed information
+            session_data.task_status = status
+            session_data.last_activity = datetime.now()
+
+            # Try to update global task status with rich data
+            try:
+                if isinstance(result, StepResult):
+                    global_task_manager.update_task_status(
+                        task_id,
+                        status,
+                        error_message=error_message,
+                        result=str(result)
+                    )
+                else:
+                    global_task_manager.update_task_status(task_id, status, error_message=error_message, result=str(result))
+            except Exception as status_error:
+                logger.error(f"Failed to update task status: {status_error}")
+                # Try fallback status update
+                try:
+                    global_task_manager.update_task_status(task_id, status, result=str(result))
+                except Exception as fallback_error:
+                    logger.error(f"Fallback status update also failed: {fallback_error}")
+
+            # Add result to conversation history
+            session_data.conversation_history.append({
+                'role': 'assistant',
+                'content': str(result),
+                'timestamp': datetime.now().isoformat()
+            })
+
+            # Emit appropriate completion event based on status
+            if status == 'completed':
+                self.socketio.emit('task_completed', completion_data, room=session_data.session_id)
+            elif status == 'stopped':
+                self.socketio.emit('task_stopped', completion_data, room=session_data.session_id)
+            elif status == 'error':
+                self.socketio.emit('task_error', {
+                    'session_id': session_data.session_id,
+                    'error': message,
+                    'task_id': task_id,
+                    'timestamp': datetime.now().isoformat()
+                }, room=session_data.session_id)
+
+        except Exception as e:
+            logger.error(f"Error in _handle_task_completion: {e}")
+            # Ensure basic task completion notification still works
+            try:
+                self.socketio.emit('task_completed', {
+                    'session_id': session_data.session_id,
+                    'result': str(result),
+                    'task_id': task_id,
+                    'script_id': script_id,
+                    'timestamp': datetime.now().isoformat()
+                }, room=session_data.session_id)
+            except:
+                pass  # Last resort - ignore notification errors
+
     def run(self):
         """Run the web application"""
         print(f"Starting Phone Agent Web Interface...")
@@ -1403,6 +1504,8 @@ class PhoneAgentWeb:
             debug=self.debug,
             allow_unsafe_werkzeug=True
         )
+
+
 
 
 def main():

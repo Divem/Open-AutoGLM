@@ -31,15 +31,17 @@ Open-AutoGLM 提供了现代化的 Web 界面，让手机自动化变得像聊�
 
 ```bash
 # 使用启动脚本（推荐）
-python web_start.py
+python3 web_start.py --port 8080
 
-# 指定端口启动
-python web_start.py --port 8080
+# 或使用其他端口
+python3 web_start.py --port 9000
 ```
+
+> ⚠️ **注意**: macOS 系统的 AirPlay Receiver 默认占用 5000 端口，建议使用 8080 端口启动服务。
 
 #### 2. 访问界面
 
-打开浏览器访问：**http://localhost:5000**
+打开浏览器访问：**http://localhost:8080**
 
 ### 主要功能
 
@@ -115,7 +117,17 @@ Web 界面内置了三个预设配置：
 pip install -r requirements-web.txt
 
 # 检查端口占用
-python web_start.py --port 8080
+lsof -i :5000  # 查看5000端口占用
+python3 web_start.py --port 8080  # 使用其他端口
+```
+
+**数据库连接失败**:
+```bash
+# 测试 Supabase 连接
+python3 test_supabase_connection.py
+
+# 如果遇到 SSL 错误，尝试重启服务
+# SSL 错误通常是暂时的网络问题
 ```
 
 **设备连接问题**:
@@ -172,13 +184,13 @@ Open-AutoGLM 是一个企业级手机自动化智能平台，基于先进的 Aut
 
 1. **Web 界面（推荐）**:
    ```bash
-   python web_start.py
-   # 访问 http://localhost:5000
+   python3 web_start.py --port 8080
+   # 访问 http://localhost:8080
    ```
 
 2. **命令行方式**:
    ```bash
-   python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开微信查看未读消息"
+   python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开微信查看未读消息"
    ```
 
 > ⚠️
@@ -267,15 +279,15 @@ pip install -r requirements-web.txt
 #### Web 界面方式
 ```bash
 # 一键启动 Web 界面
-python web_start.py
+python3 web_start.py --port 8080
 
-# 访问 http://localhost:5000 开始使用
+# 访问 http://localhost:8080 开始使用
 ```
 
 #### 命令行方式
 ```bash
 # 使用第三方服务（需要 API Key）
-python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
+python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
 ```
 
 ### 3. 配置 ADB
@@ -319,10 +331,10 @@ adb devices
 
 ```bash
 # 使用智谱 BigModel
-python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model "autoglm-phone" --apikey "your-bigmodel-api-key" "打开美团搜索附近的火锅店"
+python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model "autoglm-phone" --apikey "your-bigmodel-api-key" "打开美团搜索附近的火锅店"
 
 # 使用 ModelScope
-python main.py --base-url https://api-inference.modelscope.cn/v1 --model "ZhipuAI/AutoGLM-Phone-9B" --apikey "your-modelscope-api-key" "打开美团搜索附近的火锅店"
+python3 main.py --base-url https://api-inference.modelscope.cn/v1 --model "ZhipuAI/AutoGLM-Phone-9B" --apikey "your-modelscope-api-key" "打开美团搜索附近的火锅店"
 ```
 
 #### 选项 B: 自行部署模型
@@ -430,9 +442,9 @@ Web 界面提供了最直观的使用体验，支持实时监控和多轮对话�
 
 ```bash
 # 启动 Web 界面
-python web_start.py
+python3 web_start.py --port 8080
 
-# 浏览器访问 http://localhost:5000
+# 浏览器访问 http://localhost:8080
 ```
 
 **主要优势**:
@@ -450,25 +462,25 @@ python web_start.py
 
 ```bash
 # 单次任务执行
-python main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b" "打开美团搜索附近的火锅店"
+python3 main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b" "打开美团搜索附近的火锅店"
 
 # 交互模式
-python main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b"
+python3 main.py --base-url http://localhost:8000/v1 --model "autoglm-phone-9b"
 
 # 使用第三方服务（智谱BigModel）
-python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
+python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone --apikey "your-api-key" "打开微信查看未读消息"
 
 # 使用英文界面
-python main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browser"
+python3 main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browser"
 
 # 列出支持的应用
-python main.py --list-apps
+python3 main.py --list-apps
 
 # 脚本记录模式 - 自动记录操作并生成可重放脚本
-python main.py --record-script "打开设置调整音量到最大"
+python3 main.py --record-script "打开设置调整音量到最大"
 
 # 自定义脚本输出目录
-python main.py --record-script --script-output-dir my_scripts "检查天气应用"
+python3 main.py --record-script --script-output-dir my_scripts "检查天气应用"
 ```
 
 ### Python API
@@ -560,10 +572,10 @@ python main.py --record-script --lang cn --model autoglm-phone "导航到公司"
 
 ```bash
 # 运行重放脚本
-python scripts/20251213_133613_打开设置调整音量到最大_replay.py scripts/20251213_133613_打开设置调整音量到最大.json
+python3 scripts/20251213_133613_打开设置调整音量到最大_replay.py scripts/20251213_133613_打开设置调整音量到最大.json
 
 # 或者直接运行（如果脚本在同一目录）
-python scripts/your_task_replay.py
+python3 scripts/your_task_replay.py
 ```
 
 重放脚本执行时：
@@ -612,7 +624,7 @@ config = AgentConfig(
 
 ```bash
 # 执行任务并记录脚本
-python main.py --record-script "打开设置调整音量到最大"
+python3 main.py --record-script "打开设置调整音量到最大"
 
 # 输出结果：
 # ✅ 任务完成: 打开设置调整音量到最大
@@ -729,7 +741,7 @@ python web_start.py
 #### 测试数据上传
 ```bash
 # 执行一个简单任务测试
-python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开设置"
+python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model autoglm-phone "打开设置"
 ```
 
 检查云数据库中是否出现新的任务记录。
@@ -755,10 +767,10 @@ SCREENSHOT_RETENTION_DAYS = 7
 #### 批量上传历史截图
 ```bash
 # 上传本地所有截图到云端
-python tools/bulk_upload_screenshots.py
+python3 tools/bulk_upload_screenshots.py
 
 # 预览模式（不实际上传）
-python tools/bulk_upload_screenshots.py --dry-run
+python3 tools/bulk_upload_screenshots.py --dry-run
 ```
 
 ### 故障排除
@@ -1273,10 +1285,12 @@ requirements-web.txt     # Web 界面依赖
 pip install -r requirements-web.txt
 
 # 检查端口是否被占用
-netstat -tulpn | grep :5000
+lsof -i :5000  # macOS
+# 或
+netstat -tulpn | grep :5000  # Linux
 
 # 使用不同端口启动
-python web_start.py --port 8080
+python3 web_start.py --port 8080
 ```
 
 #### WebSocket 连接失败
@@ -1315,8 +1329,8 @@ curl -H "Authorization: Bearer $SUPABASE_SECRET_KEY" "$SUPABASE_URL/rest/v1/"
 
 ```bash
 # 批量上传工具
-python tools/bulk_upload_screenshots.py --dry-run  # 预览
-python tools/bulk_upload_screenshots.py           # 上传
+python3 tools/bulk_upload_screenshots.py --dry-run  # 预览
+python3 tools/bulk_upload_screenshots.py           # 上传
 ```
 
 #### 数据同步问题
@@ -1396,10 +1410,10 @@ export STEP_FLUSH_INTERVAL=2.0
 #### 调试模式启用
 ```bash
 # Web 界面调试
-python web_start.py --debug
+python3 web_start.py --debug
 
 # 命令行详细输出
-python main.py --verbose --base-url http://localhost:8000/v1 "测试任务"
+python3 main.py --verbose --base-url http://localhost:8000/v1 "测试任务"
 ```
 
 #### 日志查看
@@ -1559,10 +1573,10 @@ pip install -e .
 
 ```bash
 # 使用智谱 BigModel
-python main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model "autoglm-phone" --apikey "your-bigmodel-api-key" "打开美团搜索附近的火锅店"
+python3 main.py --base-url https://open.bigmodel.cn/api/paas/v4 --model "autoglm-phone" --apikey "your-bigmodel-api-key" "打开美团搜索附近的火锅店"
 
 # 使用 ModelScope
-python main.py --base-url https://api-inference.modelscope.cn/v1 --model "ZhipuAI/AutoGLM-Phone-9B" --apikey "your-modelscope-api-key" "打开美团搜索附近的火锅店"
+python3 main.py --base-url https://api-inference.modelscope.cn/v1 --model "ZhipuAI/AutoGLM-Phone-9B" --apikey "your-modelscope-api-key" "打开美团搜索附近的火锅店"
 ```
 
 或者直接使用用户提供的其他模型服务 URL，跳过本地模型部署步骤。
@@ -1642,13 +1656,13 @@ adb kill-server && adb start-server
 pip install -r requirements.txt && pip install -e .
 
 # 运行 Agent(交互模式)
-python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b"
+python3 main.py --base-url {MODEL_URL} --model "autoglm-phone-9b"
 
 # 运行 Agent(单次任务)
-python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b" "你的任务描述"
+python3 main.py --base-url {MODEL_URL} --model "autoglm-phone-9b" "你的任务描述"
 
 # 查看支持的应用列表
-python main.py --list-apps
+python3 main.py --list-apps
 ```
 
 ---

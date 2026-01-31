@@ -1977,3 +1977,315 @@ body {
         background: #a0aec0;
     }
 }
+
+/* ============================================
+   任务完成状态增强样式
+   ============================================ */
+
+/* 状态徽章增强样式 */
+.status-badge {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 50px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-badge.running {
+    background: linear-gradient(45deg, #28a745, #20c997);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+.status-badge.completed {
+    background: linear-gradient(45deg, #007bff, #6610f2);
+    color: white;
+}
+
+.status-badge.stopped {
+    background: linear-gradient(45deg, #ffc107, #fd7e14);
+    color: #212529;
+}
+
+.status-badge.error {
+    background: linear-gradient(45deg, #dc3545, #e83e8c);
+    color: white;
+    animation: shake 0.5s ease-in-out;
+}
+
+.status-badge.idle {
+    background: linear-gradient(45deg, #6c757d, #495057);
+    color: white;
+}
+
+/* 进度条增强样式 */
+.progress {
+    height: 8px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    background-color: rgba(0,0,0,0.05);
+}
+
+.progress-bar {
+    transition: width 0.6s ease, background-color 0.3s ease;
+    border-radius: 10px;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        45deg,
+        transparent 30%,
+        rgba(255,255,255,0.2) 50%,
+        transparent 70%
+    );
+    animation: shimmer 2s infinite;
+}
+
+/* 任务历史状态增强 */
+.task-status {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.task-status:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+}
+
+.task-status.running {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    animation: taskRunning 1.5s ease-in-out infinite;
+}
+
+.task-status.completed {
+    background: linear-gradient(135deg, #007bff, #6610f2);
+}
+
+.task-status.stopped {
+    background: linear-gradient(135deg, #ffc107, #fd7e14);
+    color: #212529;
+}
+
+.task-status.error {
+    background: linear-gradient(135deg, #dc3545, #e83e8c);
+}
+
+/* 步骤警告样式 */
+.step-warning {
+    background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+    border-left: 4px solid #ffc107;
+    padding: 1rem;
+    margin: 0.5rem 0;
+    border-radius: 8px;
+    color: #856404;
+    font-weight: 500;
+    animation: slideInWarning 0.3s ease-out;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+}
+
+.step-critical {
+    background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+    border-left: 4px solid #dc3545;
+    padding: 1rem;
+    margin: 0.5rem 0;
+    border-radius: 8px;
+    color: #721c24;
+    font-weight: 600;
+    animation: slideInCritical 0.3s ease-out, pulse 1s infinite;
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+.step-info {
+    background: linear-gradient(135deg, #d1ecf1, #bee5eb);
+    border-left: 4px solid #17a2b8;
+    padding: 1rem;
+    margin: 0.5rem 0;
+    border-radius: 8px;
+    color: #0c5460;
+    animation: slideInInfo 0.3s ease-out;
+    box-shadow: 0 2px 8px rgba(23, 162, 184, 0.3);
+}
+
+/* 动画定义 */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+@keyframes taskRunning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+}
+
+@keyframes slideInWarning {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInCritical {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideInInfo {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Toast 增强样式 */
+.toast {
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    border: none;
+    font-weight: 500;
+}
+
+.toast-header {
+    background: transparent;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.toast-body {
+    padding: 1rem;
+    font-size: 0.9rem;
+}
+
+/* 步骤计数器增强 */
+#step-count {
+    background: linear-gradient(45deg, #007bff, #6610f2);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 25px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    box-shadow: 0 2px 8px rgba(0,123,255,0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#step-count::before {
+    content: '📊';
+    font-size: 1rem;
+}
+
+/* 响应式适配 */
+@media (max-width: 768px) {
+    .status-badge {
+        font-size: 0.7rem;
+        padding: 0.4rem 0.8rem;
+    }
+
+    .task-status {
+        font-size: 0.65rem;
+        padding: 0.3rem 0.6rem;
+    }
+
+    .step-warning,
+    .step-critical,
+    .step-info {
+        padding: 0.8rem;
+        font-size: 0.9rem;
+    }
+
+    #step-count {
+        font-size: 0.8rem;
+        padding: 0.4rem 0.8rem;
+    }
+}
+
+/* 高对比度模式支持 */
+@media (prefers-contrast: high) {
+    .status-badge,
+    .task-status {
+        border: 2px solid currentColor;
+        background: currentColor;
+        color: white !important;
+    }
+
+    .step-warning {
+        border: 2px solid #856404;
+        background: #fff3cd;
+    }
+
+    .step-critical {
+        border: 2px solid #721c24;
+        background: #f8d7da;
+    }
+
+    .step-info {
+        border: 2px solid #0c5460;
+        background: #d1ecf1;
+    }
+}
+
+/* 减少动画模式支持 */
+@media (prefers-reduced-motion: reduce) {
+    .status-badge,
+    .task-status,
+    .progress-bar,
+    .toast {
+        transition: none;
+        animation: none;
+    }
+
+    .step-warning,
+    .step-critical,
+    .step-info {
+        animation: none;
+    }
+}

@@ -107,6 +107,50 @@ class StepResult:
     action: dict[str, Any] | None
     thinking: str
     message: str | None = None
+    reason: str | None = None
+    step_count: int = 0
+    max_steps: int = 0
+    execution_time: float | None = None
+
+    @classmethod
+    def max_steps_reached(cls, step_count: int, max_steps: int, message: str | None = None) -> 'StepResult':
+        """Create a StepResult for max steps reached scenario."""
+        return cls(
+            success=False,
+            finished=True,
+            action=None,
+            thinking="",
+            message=message or f"Max steps reached ({step_count}/{max_steps})",
+            reason="max_steps_reached",
+            step_count=step_count,
+            max_steps=max_steps
+        )
+
+    @classmethod
+    def completed(cls, message: str | None = None, step_count: int = 0) -> 'StepResult':
+        """Create a StepResult for successful completion."""
+        return cls(
+            success=True,
+            finished=True,
+            action=None,
+            thinking="",
+            message=message or "Task completed",
+            reason="completed",
+            step_count=step_count
+        )
+
+    @classmethod
+    def stopped(cls, message: str, step_count: int = 0) -> 'StepResult':
+        """Create a StepResult for stopped task."""
+        return cls(
+            success=False,
+            finished=True,
+            action=None,
+            thinking="",
+            message=message,
+            reason="stopped",
+            step_count=step_count
+        )
 
 
 class PhoneAgent:
@@ -224,7 +268,11 @@ class PhoneAgent:
                 if self.recorder:
                     self.recorder.finish_recording(result.success)
                     self._save_script()
-                return result.message or "Task completed"
+                # Return structured result for successful completion
+                return StepResult.completed(
+                    message=result.message,
+                    step_count=self._step_count
+                )
 
             # Continue until finished or max steps reached
             while self._step_count < self.agent_config.max_steps:
@@ -236,12 +284,20 @@ class PhoneAgent:
                     if self.recorder:
                         self.recorder.finish_recording(result.success)
                         self._save_script()
-                    return result.message or "Task completed"
+                    # Return structured result for successful completion
+                    return StepResult.completed(
+                        message=result.message,
+                        step_count=self._step_count
+                    )
 
+            # Max steps reached - return structured result
             if self.recorder:
                 self.recorder.finish_recording(False)
                 self._save_script()
-            return "Max steps reached"
+            return StepResult.max_steps_reached(
+                step_count=self._step_count,
+                max_steps=self.agent_config.max_steps
+            )
 
         except StopException as e:
             # Task was stopped by user
@@ -250,7 +306,11 @@ class PhoneAgent:
             if self.recorder:
                 self.recorder.finish_recording(False)
                 self._save_script()
-            return str(e)
+            # Return structured result for user stop
+            return StepResult.stopped(
+                message=str(e),
+                step_count=self._step_count
+            )
         except Exception as e:
             if self.recorder:
                 self.recorder.finish_recording(False)

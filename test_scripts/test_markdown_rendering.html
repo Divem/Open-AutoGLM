@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown渲染功能测试</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="web/static/css/style.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Markdown渲染功能测试</h1>
+
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <h3>测试内容</h3>
+                <div class="card">
+                    <div class="card-body">
+                        <h5>1. 纯文本内容</h5>
+                        <p id="plain-text">这是一段纯文本内容，不应该被渲染为Markdown。</p>
+
+                        <h5>2. Markdown内容</h5>
+                        <div id="markdown-content"># 标题测试
+
+这是一个**粗体**文本和*斜体*文本的示例。
+
+## 列表示例
+
+- 第一项
+- 第二项
+  - 子项目1
+  - 子项目2
+
+1. 有序列表项1
+2. 有序列表项2
+
+## 代码示例
+
+这是一个`行内代码`示例。
+
+```javascript
+function hello() {
+    console.log("Hello, World!");
+}
+```
+
+## 引用块
+
+> 这是一个引用块示例
+> 可以包含多行内容
+
+## 链接和表格
+
+[访问GitHub](https://github.com)
+
+| 列1 | 列2 | 列3 |
+|-----|-----|-----|
+| A   | B   | C   |
+| 1   | 2   | 3   |
+
+</div>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <button class="btn btn-primary" onclick="testRendering()">开始测试</button>
+                    <button class="btn btn-secondary" onclick="clearResults()">清除结果</button>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <h3>渲染结果</h3>
+                <div class="card">
+                    <div class="card-body">
+                        <div id="results-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <h3>安全性测试</h3>
+                <div class="card">
+                    <div class="card-body">
+                        <h5>XSS攻击防护测试</h5>
+                        <div id="xss-test-content">&lt;script&gt;alert('XSS攻击')&lt;/script&gt;
+
+&lt;img src="x" onerror="alert('XSS图片攻击')"&gt;
+
+[恶意链接](javascript:alert('XSS链接'))
+
+&lt;style&gt;body{background:red}&lt;/style&gt;
+
+</div>
+                        <button class="btn btn-warning mt-2" onclick="testSecurity()">测试安全性</button>
+                        <div id="security-results" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <h3>任务详情弹框模拟测试</h3>
+                <button class="btn btn-success" onclick="testModal()">测试任务详情弹框</button>
+                <div id="modal-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 从app.js复制MarkdownRenderer类
+        class MarkdownRenderer {
+            constructor() {
+                this.initMarked();
+                this.MAX_CONTENT_LENGTH = 50000;
+            }
+
+            initMarked() {
+                if (typeof marked === 'undefined') {
+                    console.warn('marked.js not loaded, falling back to plain text');
+                    return;
+                }
+
+                marked.setOptions({
+                    gfm: true,
+                    breaks: true,
+                    headerIds: false,
+                    sanitize: false,
+                    smartLists: true,
+                    smartypants: false
+                });
+
+                const renderer = new marked.Renderer();
+                this.configureRenderer(renderer);
+                marked.setOptions({ renderer });
+            }
+
+            configureRenderer(renderer) {
+                renderer.link = (href, title, text) => {
+                    const safeHref = this.sanitizeUrl(href);
+                    const titleAttr = title ? ` title="${this.escapeHtml(title)}"` : '';
+                    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`;
+                };
+
+                renderer.code = (code, language) => {
+                    const validLanguage = this.isValidLanguage(language) ? language : '';
+                    const langClass = validLanguage ? ` class="language-${validLanguage}"` : '';
+                    return `<pre><code${langClass}>${this.escapeHtml(code)}</code></pre>`;
+                };
+
+                renderer.image = (href, title, text) => {
+                    const safeHref = this.sanitizeUrl(href);
+                    const titleAttr = title ? ` title="${this.escapeHtml(title)}"` : '';
+                    const altAttr = text ? ` alt="${this.escapeHtml(text)}"` : '';
+                    return `<img src="${safeHref}"${altAttr}${titleAttr} style="max-width: 100%; height: auto;">`;
+                };
+            }
+
+            isMarkdownContent(text) {
+                if (!text || typeof text !== 'string') return false;
+
+                const patterns = [
+                    /^#{1,6}\s/m,
+                    /^\*{1,2}[^*\n]+\*{1,2}/m,
+                    /^[-*+]\s+/m,
+                    /^\d+\.\s+/m,
+                    /^\[.*?\]\(.*?\)/m,
+                    /```[\s\S]*?```/m,
+                    /`[^`\n]+`/m,
+                    /^>[\s\S]/m,
+                    /^\|.*\|/m
+                ];
+
+                if (text.length < 20) return false;
+
+                const matchCount = patterns.reduce((count, pattern) => {
+                    return pattern.test(text) ? count + 1 : count;
+                }, 0);
+
+                return matchCount >= 2;
+            }
+
+            render(content) {
+                try {
+                    if (content.length > this.MAX_CONTENT_LENGTH) {
+                        console.warn('Content too long for safe rendering:', content.length);
+                        return this.escapeHtml(content);
+                    }
+
+                    if (!this.isMarkdownContent(content)) {
+                        return this.escapeHtml(content);
+                    }
+
+                    if (typeof marked === 'undefined') {
+                        console.warn('marked.js not available, falling back to plain text');
+                        return this.escapeHtml(content);
+                    }
+
+                    const html = marked.parse(content);
+                    return this.sanitizeHtml(html);
+
+                } catch (error) {
+                    console.error('Markdown rendering error:', error);
+                    return this.escapeHtml(content);
+                }
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            sanitizeHtml(html) {
+                const dangerousTags = /<(script|iframe|object|embed|form|input|button|textarea|select|option|style|link|meta)[^>]*>/gi;
+                const dangerousAttrs = /(on\w+|javascript:|data:text\/html|vbscript:|data:script)/gi;
+                const dangerousStyles = /(expression|behavior|javascript:|@import|binding)/gi;
+
+                return html
+                    .replace(dangerousTags, '')
+                    .replace(dangerousAttrs, '')
+                    .replace(dangerousStyles, '');
+            }
+
+            sanitizeUrl(url) {
+                try {
+                    if (!url) return '#';
+                    const parsed = new URL(url, window.location.origin);
+                    if (['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)) {
+                        return parsed.toString();
+                    }
+                } catch (e) {
+                    console.warn('Invalid URL:', url);
+                }
+                return '#';
+            }
+
+            isValidLanguage(language) {
+                if (!language) return true;
+                const validLanguages = [
+                    'javascript', 'js', 'typescript', 'ts', 'python', 'py', 'java', 'cpp', 'c', 'c++',
+                    'html', 'css', 'json', 'xml', 'yaml', 'yml', 'bash', 'shell', 'sh', 'sql',
+                    'markdown', 'md', 'go', 'rust', 'rs', 'php', 'ruby', 'rb', 'swift', 'kotlin',
+                    'kt', 'scala', 'r', 'dart', 'lua', 'perl', 'pl', 'objc', 'vb', 'dockerfile',
+                    'diff', 'patch', 'log', 'txt', 'text', 'plain', 'nginx', 'apache', 'ini'
+                ];
+                return validLanguages.includes(language.toLowerCase());
+            }
+        }
+
+        const renderer = new MarkdownRenderer();
+
+        function testRendering() {
+            const resultsContainer = document.getElementById('results-container');
+            const plainText = document.getElementById('plain-text').textContent;
+            const markdownContent = document.getElementById('markdown-content').textContent;
+
+            let resultsHtml = '';
+
+            // 测试纯文本
+            const isPlainMarkdown = renderer.isMarkdownContent(plainText);
+            const plainRendered = renderer.render(plainText);
+
+            resultsHtml += `
+                <div class="mb-4">
+                    <h6>纯文本测试 (${isPlainMarkdown ? '检测为Markdown' : '检测为纯文本'})</h6>
+                    <div class="task-result-container">
+                        ${isPlainMarkdown ?
+                            `<div class="markdown-body">${plainRendered}</div>` :
+                            `<pre>${plainRendered}</pre>`
+                        }
+                    </div>
+                </div>
+            `;
+
+            // 测试Markdown内容
+            const isMarkdown = renderer.isMarkdownContent(markdownContent);
+            const markdownRendered = renderer.render(markdownContent);
+
+            resultsHtml += `
+                <div class="mb-4">
+                    <h6>Markdown测试 (${isMarkdown ? '检测为Markdown' : '检测为纯文本'})</h6>
+                    <div class="task-result-container markdown-content">
+                        ${isMarkdown ?
+                            `<div class="markdown-body">${markdownRendered}</div>` :
+                            `<pre>${markdownRendered}</pre>`
+                        }
+                    </div>
+                </div>
+            `;
+
+            resultsContainer.innerHTML = resultsHtml;
+        }
+
+        function testSecurity() {
+            const securityResults = document.getElementById('security-results');
+            const xssContent = document.getElementById('xss-test-content').textContent;
+
+            const isMarkdown = renderer.isMarkdownContent(xssContent);
+            const rendered = renderer.render(xssContent);
+
+            securityResults.innerHTML = `
+                <div class="alert alert-info">
+                    <h6>安全性测试结果 (${isMarkdown ? '检测为Markdown' : '检测为纯文本'})</h6>
+                    <p>原始内容已被安全处理，不应执行任何恶意脚本。</p>
+                    <div class="task-result-container ${isMarkdown ? 'markdown-content' : ''}">
+                        ${isMarkdown ?
+                            `<div class="markdown-body">${rendered}</div>` :
+                            `<pre>${rendered}</pre>`
+                        }
+                    </div>
+                </div>
+            `;
+        }
+
+        function clearResults() {
+            document.getElementById('results-container').innerHTML = '';
+            document.getElementById('security-results').innerHTML = '';
+            document.getElementById('modal-container').innerHTML = '';
+        }
+
+        function testModal() {
+            const modalContainer = document.getElementById('modal-container');
+
+            // 模拟任务数据
+            const mockTask = {
+                task_id: 'test-123',
+                task_description: '测试Markdown渲染功能',
+                status: 'completed',
+                session_id: 'session-456',
+                start_time: new Date().toISOString(),
+                end_time: new Date().toISOString(),
+                result: `# 任务执行结果
+
+这是一个包含**Markdown格式**的执行结果。
+
+## 完成的步骤
+
+1. 第一步：初始化环境
+2. 第二步：执行主要逻辑
+3. 第三步：清理资源
+
+### 代码示例
+
+\`\`\`python
+def hello_world():
+    print("Hello, Markdown!")
+    return True
+\`\`\`
+
+### 重要信息
+
+> **注意**: 这是一个测试结果，用于验证Markdown渲染功能。
+
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| 渲染器 | ✅ 正常 | Markdown内容正确渲染 |
+| 安全性 | ✅ 正常 | XSS攻击被成功阻止 |
+| 样式 | ✅ 正常 | CSS样式正确应用 |
+
+[查看更多信息](https://github.com)
+`,
+                error_message: null
+            };
+
+            // 使用与app.js相同的逻辑生成模态框
+            const resultContent = renderer.render(mockTask.result);
+            const isMarkdown = renderer.isMarkdownContent(mockTask.result);
+            const errorContent = '';
+
+            const modalHtml = `
+                <div class="modal fade" id="testTaskDetailsModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">任务详情测试</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>任务ID:</strong></div>
+                                    <div class="col-sm-9"><code>${mockTask.task_id}</code></div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>任务描述:</strong></div>
+                                    <div class="col-sm-9">${mockTask.task_description || '无'}</div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>状态:</strong></div>
+                                    <div class="col-sm-9">
+                                        <span class="badge bg-primary">已完成</span>
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>会话ID:</strong></div>
+                                    <div class="col-sm-9"><code>${mockTask.session_id}</code></div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>开始时间:</strong></div>
+                                    <div class="col-sm-9">${new Date(mockTask.start_time).toLocaleString()}</div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>结束时间:</strong></div>
+                                    <div class="col-sm-9">${new Date(mockTask.end_time).toLocaleString()}</div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>执行结果:</strong></div>
+                                    <div class="col-sm-9">
+                                        <div class="task-result-container ${isMarkdown ? 'markdown-content' : ''}">
+                                            ${isMarkdown ?
+                                                `<div class="markdown-body">${resultContent}</div>` :
+                                                `<pre>${resultContent}</pre>`
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            modalContainer.innerHTML = modalHtml;
+
+            // 显示模态框
+            const modal = new bootstrap.Modal(document.getElementById('testTaskDetailsModal'));
+            modal.show();
+        }
+
+        // 页面加载完成后自动运行基础测试
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('页面加载完成，Markdown渲染器已初始化');
+        });
+    </script>
+</body>
+</html>
